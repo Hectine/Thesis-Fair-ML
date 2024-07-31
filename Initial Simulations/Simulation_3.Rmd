@@ -1,0 +1,213 @@
+---
+title: "Simulation_3"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set-up
+```{r}
+# load libraries 
+library(tidyverse)
+library(MASS)
+library(dplyr)
+
+# set seed 
+set.seed(294)
+
+# set number of data points
+n <- 10000
+```
+
+# generate protected attributes
+```{r}
+# gender
+gender <- as.factor(sample(c("Female", "Male"), n, replace = TRUE))
+
+# ethnicity
+ethnicity <- sample(c("Minority", "Majority"), n, replace = TRUE, prob = c(0.35, 0.65)
+
+# disability
+#disability <- sample(c("Yes", "No"), n, replace = TRUE), prob = c(0.05, 0.95)
+```
+
+# generate base variable (education)
+Higher education for women compared to men
+```{r}
+# Define the levels of education
+education_levels <- c("No High School", "High School", "Some College", "Bachelor's", "Master's", "Doctorate")
+
+# gender effect - Simulate education with different probabilities for men and women 
+education <- sapply(gender, function(g) {
+  if (g == "Male") {
+    sample(education_levels, size = 1, prob = c(0.264, 0.4, 0.2, 0.09, 0.04, 0.006))
+  } else {
+    sample(education_levels, size = 1, prob = c(0.21, 0.35, 0.25, 0.12, 0.06, 0.01))
+  }
+})
+
+# Create a data frame with the simulated data
+simulated_data <- data.frame(gender = gender, education = education)
+
+table(simulated_data$gender, simulated_data$education)
+```
+
+# generate income variable
+```{r}
+# Define base income, gender effect, education effect, and interaction effect
+base_income <- 30000
+
+# gender effect
+gender_effect <- ifelse(gender == "Male", 8500, 0)
+
+# education effect
+education_effect <- sapply(education, function(e) {
+  switch(e,
+         "No High School" = 0,
+         "High School" = 5000,
+         "Some College" = 7500,
+         "Bachelor's" = 10000,
+         "Master's" = 20000,
+         "Doctorate" = 30000)
+})
+
+# gender effect in interaction with education
+interaction_effect <- mapply(function(g, e) {
+  if (g == "Female") {
+    switch(e,
+           "No High School" = 0,
+           "High School" = 0,
+           "Some College" = 0,
+           "Bachelor's" = 0,
+           "Master's" = 0,
+           "Doctorate" = 0)
+  } else {
+    switch(e,
+           "No High School" = 0,
+           "High School" = 2000,
+           "Some College" = 4000,
+           "Bachelor's" = 6000,
+           "Master's" = 8000,
+           "Doctorate" = 10000)
+  }
+}, gender, education)
+
+# Add noise to the income
+set.seed(456)  # Setting seed for reproducibility
+noise <- rnorm(n, mean = 0, sd = 5000)
+
+# Calculate the income
+income <- base_income + gender_effect + education_effect + interaction_effect + noise
+
+# Add income to the data frame
+simulated_data$income <- income
+
+summary(simulated_data$income)
+summary(simulated_data[gender == "Male",])
+summary(simulated_data[gender == "Female",])
+```
+
+# generate house ownership varible
+```{r}
+# Define base probabilities for house ownership by education
+base_probabilities <- sapply(education, function(e) {
+  switch(e,
+         "No High School" = 0.1,
+         "High School" = 0.2,
+         "Some College" = 0.3,
+         "Bachelor's" = 0.5,
+         "Master's" = 0.6,
+         "Doctorate" = 0.7)
+})
+
+# Adjust probabilities based on income
+income_effect <- (income - mean(income)) / sd(income) * 0.1
+ownership_probabilities <- base_probabilities + income_effect
+
+# Add noise to the probabilities
+set.seed(789)  # Setting seed for reproducibility
+prob_noise <- rnorm(n, mean = 0, sd = 0.05)
+ownership_probabilities <- ownership_probabilities + prob_noise
+
+# Ensure probabilities are between 0 and 1
+ownership_probabilities <- pmin(pmax(ownership_probabilities, 0), 1)
+
+# Determine house ownership using a threshold
+set.seed(101112)  # Setting seed for reproducibility
+house_ownership <- ifelse(runif(n) < ownership_probabilities, 1, 0)
+
+# Add house ownership to the data frame
+simulated_data$house_ownership <- house_ownership
+
+table(simulated_data$gender, simulated_data$house_ownership)
+table(simulated_data$house_ownership, simulated_data$education)
+```
+
+# Generate crime variable
+```{r}
+generate_crime <- function(education, income, house_ownership) {
+  # Convert education to numeric
+  education_numeric <- switch(education,
+    "No High School" = 1,
+    "High School" = 2,
+    "Some College" = 3,
+    "Bachelor's" = 4,
+    "Master's" = 5,
+    "Doctorate" = 6
+  )
+
+  # Calculate linear combination
+  linear_combination <- 2 + weights$education * education_numeric +
+    weights$income * income +
+    weights$house_ownership * house_ownership
+
+  # Apply sigmoid function
+  crime_prob <- sigmoid(linear_combination)
+
+  # Add noise
+  crime_prob <- min(max(crime_prob + rnorm(1, mean = 0, sd = 0.05), 0), 1)
+
+  # Sample outcome on crime variable
+  sample(c(0, 1), 1, prob = c(1 - crime_prob, crime_prob))
+}
+
+simulated_data$crime <- mapply(generate_crime, simulated_data$education, simulated_data$income, simulated_data$house_ownership)
+
+table(simulated_data$crime, simulated_data$gender)
+table(simulated_data$crime)
+```
+
+# Try model
+```{r}
+train <- sample(1:n, 0.8 * n)
+data_train <- simulated_data[train,]
+data_test <- simulated_data[-train,]
+
+# Fit logistic regression model without sensitive attributes
+model <- glm(crime ~ ., data = data_train, family = binomial)
+predicted_outcome <- predict(model, data_test, type = "response")
+test_outcome <- ifelse(predicted_outcome > 0.5, 1, 0)
+summary(model)
+
+# Model performance
+confusion_matrix_g <- table(data_test$crime, test_outcome)
+(confusion_matrix_g[1,1] + confusion_matrix_g[2,2]) / nrow(data_test) # accuracy
+confusion_matrix_g[2,1] / nrow(data_test) # p false negative
+confusion_matrix_g[1,2] / nrow(data_test) # p false positive
+
+# Accuracy for subgroups
+indices <- which(data_test$gender == "Female")
+confusion_matrix_female <- table(data_test$crime[indices], test_outcome[indices])
+(confusion_matrix_female[1,1] + confusion_matrix_female[2,2]) / length(indices) # accuracy
+confusion_matrix_female[2,1] / length(indices) # p false negative
+confusion_matrix_female[1,2] / length(indices) # p false positive
+```
+```{r}
+model_income <- glm(income ~ ., data = simulated_data)
+summary(model_income)
+```
+

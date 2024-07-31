@@ -1,0 +1,380 @@
+---
+title: "Simulation4"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Initial set-up
+```{r}
+# load libraries 
+library(tidyverse)
+library(MASS)
+library(dplyr)
+
+# set seed 
+set.seed(294)
+
+# set number of data points
+n <- 10000
+```
+
+# generate protected attributes
+```{r}
+# gender
+gender <- as.factor(sample(c("Female", "Male"), n, replace = TRUE))
+
+# ethnicity
+ethnicity <- sample(c("Minority", "Majority"), n, replace = TRUE, prob = c(0.35, 0.65))
+
+# disability
+disability <- sample(c("Yes", "No"), n, replace = TRUE, prob = c(0.07, 0.93))
+
+# Define the levels of education
+education_levels <- c("No High School", "High School", "Some College", "Bachelor's", "Master's", "Doctorate")
+```
+
+# education variable based on sensitive attributes
+```{r}
+# Generate education levels with different probabilities for gender, ethnicity, and disability
+education <- mapply(function(g, e, d) {
+  if (d == "Yes") {
+    sample(education_levels, size = 1, prob = c(0.4, 0.35, 0.15, 0.07, 0.02, 0.01))
+  } else if (g == "Male" && e == "Majority") {
+    sample(education_levels, size = 1, prob = c(0.264, 0.4, 0.2, 0.09, 0.04, 0.006))
+  } else if (g == "Female" && e == "Majority") {
+    sample(education_levels, size = 1, prob = c(0.21, 0.35, 0.25, 0.12, 0.06, 0.01))
+  } else if (g == "Male" && e == "Minority") {
+    sample(education_levels, size = 1, prob = c(0.35, 0.4, 0.15, 0.07, 0.02, 0.006))
+  } else {
+    sample(education_levels, size = 1, prob = c(0.3, 0.4, 0.2, 0.07, 0.02, 0.01))
+  }
+}, gender, ethnicity, disability)
+
+education <- factor(education, levels = education_levels)
+```
+
+# Create a data frame with the simulated data
+```{r}
+simulated_data <- data.frame(gender = gender, ethnicity = ethnicity, disability = disability, education = education)
+
+table(simulated_data$gender, simulated_data$education)
+table(simulated_data$ethnicity, simulated_data$education)
+table(simulated_data$disability, simulated_data$education)
+```
+
+# income variable based on sensitive attributes and education
+```{r}
+# Define base income, gender effect, education effect, ethnicity effect, disability effect, and interaction effects
+base_income <- 30000
+
+# gender effect
+gender_effect <- ifelse(gender == "Male", 8500, 0)
+
+# ethnicity effect
+ethnicity_effect <- ifelse(ethnicity == "Minority", -5000, 0)
+
+# disability effect
+disability_effect <- ifelse(disability == "Yes", -7000, 0)
+
+# education effect
+education_effect <- sapply(education, function(e) {
+  switch(as.character(e),
+         "No High School" = 0,
+         "High School" = 5000,
+         "Some College" = 7500,
+         "Bachelor's" = 10000,
+         "Master's" = 20000,
+         "Doctorate" = 30000)
+})
+
+# interaction effects (gender * education, ethnicity * education, gender * ethnicity * education, and disability interactions)
+interaction_effect <- mapply(function(g, e, et, d) {
+  if (d == "Yes" && g == "Female" && et == "Minority") {
+    switch(as.character(e),
+           "No High School" = -3000,
+           "High School" = -2500,
+           "Some College" = -2000,
+           "Bachelor's" = -1500,
+           "Master's" = -1000,
+           "Doctorate" = -500)
+  } else if (d == "Yes" && g == "Female") {
+    switch(as.character(e),
+           "No High School" = -2500,
+           "High School" = -2000,
+           "Some College" = -1500,
+           "Bachelor's" = -1000,
+           "Master's" = -500,
+           "Doctorate" = 0)
+  } else if (d == "Yes" && et == "Minority") {
+    switch(as.character(e),
+           "No High School" = -2500,
+           "High School" = -2000,
+           "Some College" = -1500,
+           "Bachelor's" = -1000,
+           "Master's" = -500,
+           "Doctorate" = 0)
+  } else if (g == "Female" && et == "Minority") {
+    switch(as.character(e),
+           "No High School" = -2000,
+           "High School" = -1500,
+           "Some College" = -1000,
+           "Bachelor's" = -500,
+           "Master's" = 0,
+           "Doctorate" = 500)
+  } else if (g == "Female") {
+    switch(as.character(e),
+           "No High School" = -1000,
+           "High School" = -500,
+           "Some College" = 0,
+           "Bachelor's" = 500,
+           "Master's" = 1000,
+           "Doctorate" = 1500)
+  } else if (et == "Minority") {
+    switch(as.character(e),
+           "No High School" = -1000,
+           "High School" = -500,
+           "Some College" = 0,
+           "Bachelor's" = 500,
+           "Master's" = 1000,
+           "Doctorate" = 1500)
+  } else {
+    switch(as.character(e),
+           "No High School" = 0,
+           "High School" = 500,
+           "Some College" = 1000,
+           "Bachelor's" = 1500,
+           "Master's" = 2000,
+           "Doctorate" = 2500)
+  }
+}, gender, education, ethnicity, disability)
+
+# Add noise to the income
+set.seed(456)  # Setting seed for reproducibility
+noise <- rnorm(n, mean = 0, sd = 5000)
+
+# Calculate the income
+income <- base_income + gender_effect + ethnicity_effect + disability_effect + education_effect + interaction_effect + noise
+
+# Add income to the data frame
+simulated_data$income <- income
+
+# Summaries
+summary(simulated_data$income)
+summary(simulated_data[simulated_data$gender == "Male",])
+summary(simulated_data[simulated_data$gender == "Female",])
+summary(simulated_data[simulated_data$ethnicity == "Majority",])
+summary(simulated_data[simulated_data$ethnicity == "Minority",])
+summary(simulated_data[simulated_data$disability == "Yes",])
+summary(simulated_data[simulated_data$disability == "No",])
+```
+
+# test relationships to income
+```{r}
+model_income <- glm(income ~ ., data = simulated_data)
+summary(model_income)
+```
+
+# House ownership variable
+```{r}
+# Define base probabilities for house ownership by education
+base_probabilities <- sapply(education, function(e) {
+  switch(as.character(e),
+         "No High School" = 0.1,
+         "High School" = 0.2,
+         "Some College" = 0.3,
+         "Bachelor's" = 0.5,
+         "Master's" = 0.6,
+         "Doctorate" = 0.7)
+})
+
+# Adjust probabilities based on income
+income_effect <- (income - mean(income)) / sd(income) * 0.1
+ownership_probabilities <- base_probabilities + income_effect
+
+# Add noise to the probabilities
+set.seed(789)  # Setting seed for reproducibility
+prob_noise <- rnorm(n, mean = 0, sd = 0.05)
+ownership_probabilities <- ownership_probabilities + prob_noise
+
+# Ensure probabilities are between 0 and 1
+ownership_probabilities <- pmin(pmax(ownership_probabilities, 0), 1)
+
+# Determine house ownership using a threshold
+set.seed(101112)  # Setting seed for reproducibility
+house_ownership <- ifelse(runif(n) < ownership_probabilities, 1, 0)
+
+# Add house ownership to the data frame
+simulated_data$house_ownership <- house_ownership
+
+# inspect house ownership
+table(simulated_data$gender, simulated_data$house_ownership)
+table(simulated_data$house_ownership, simulated_data$education)
+table(simulated_data$disability, simulated_data$house_ownership)
+table(simulated_data$ethnicity, simulated_data$house_ownership)
+```
+# function to generate new variable
+```{r}
+generate_new_variable <- function(data, existing_vars, coefficients, noise_sd, functional_form, binary = FALSE, cut_off = NULL) {
+  
+  # Ensure existing_vars and coefficients are of the same length
+  if(length(existing_vars) != length(coefficients)) {
+    stop("The number of existing variables and coefficients must be the same.")
+  }
+  
+  # Extract the relevant columns from the data and convert to numeric
+  vars <- data[, existing_vars]
+  vars <- as.data.frame(lapply(vars, as.numeric))
+  
+  # Calculate the linear combination of variables and coefficients
+  linear_combination <- as.matrix(vars) %*% coefficients
+  
+  # Add noise
+  set.seed(123)  # Ensure reproducibility
+  noise <- rnorm(nrow(data), mean = 0, sd = noise_sd)
+  
+  # Define the functional forms
+  if (functional_form == "linear") {
+    new_var <- linear_combination + noise
+  } else if (functional_form == "exp_linear") {
+    new_var <- exp(linear_combination + noise)
+  } else if (functional_form == "power") {
+    new_var <- rowSums(vars^coefficients) + noise
+  } else if (functional_form == "exp_power") {
+    new_var <- exp(rowSums(vars^coefficients) + noise)
+  } else if (functional_form == "sigmoid") {
+    new_var <- 1 / (1 + exp(-(linear_combination + noise)))
+  } else if (functional_form == "log") {
+    new_var <- rowSums(coefficients * log(abs(vars) + 1)) + noise  # +1 to avoid log(0)
+  } else {
+    stop("Invalid functional form selected.")
+  }
+  
+  # Convert to binary if specified
+  if (binary) {
+    if (is.null(cut_off)) {
+      stop("A cut-off method (mean or median) must be specified for binary conversion.")
+    } else if (cut_off == "mean") {
+      new_var <- ifelse(new_var > mean(new_var), 1, 0)
+    } else if (cut_off == "median") {
+      new_var <- ifelse(new_var > median(new_var), 1, 0)
+    } else {
+      stop("Invalid cut-off method. Choose 'mean' or 'median'.")
+    }
+  }
+  
+  return(new_var)
+}
+
+# Example:
+# new_var <- generate_new_variable(data = simulated_data, 
+#                                  existing_vars = c("income", "education"),
+#                                  coefficients = c(0.5, 1.5), 
+#                                  noise_sd = 10, 
+#                                  functional_form = "linear", 
+#                                  binary = TRUE, 
+#                                  cut_off = "mean")
+
+```
+
+# initialise new variables
+```{r}
+# 1st new variable
+new_var <- generate_new_variable(data = simulated_data, 
+                                  existing_vars = c("income", "education"),
+                                  coefficients = c(0.5, 1.5), 
+                                  noise_sd = 10, 
+                                  functional_form = "linear", 
+                                  binary = TRUE, 
+                                  cut_off = "mean")
+
+simulated_data$new_var <- new_var
+
+var_glm <- glm(new_var ~ ., data = simulated_data)
+summary(var_glm)
+
+# 2nd new variable
+new_var2 <- generate_new_variable(data = simulated_data, 
+                                  existing_vars = c("income", "education", "new_var"),
+                                  coefficients = c(3.6, 0.7, 2.3), 
+                                  noise_sd = 3, 
+                                  functional_form = "log", 
+                                  binary = FALSE, 
+                                  cut_off = NULL)
+
+simulated_data$new_var2 <- new_var2
+
+var_glm <- glm(new_var2 ~ ., data = simulated_data)
+summary(var_glm)
+
+# 3rd variable
+new_var3 <- generate_new_variable(data = simulated_data, 
+                                  existing_vars = c("house_ownership", "new_var", "new_var2"),
+                                  coefficients = c(0.12, 0.7, 0.03), 
+                                  noise_sd = 4, 
+                                  functional_form = "sigmoid", 
+                                  binary = TRUE, 
+                                  cut_off = "median")
+
+simulated_data$new_var3 <- new_var3
+
+var_glm <- glm(new_var3 ~ ., data = simulated_data)
+summary(var_glm)
+
+# 4th variable
+new_var4 <- generate_new_variable(data = simulated_data, 
+                                  existing_vars = c("house_ownership", "income", "new_var3"),
+                                  coefficients = c(2.2, 0.07, 3), 
+                                  noise_sd = 6, 
+                                  functional_form = "linear", 
+                                  binary = FALSE, 
+                                  cut_off = NULL)
+
+simulated_data$new_var4 <- new_var4
+
+var_glm <- glm(new_var4 ~ ., data = simulated_data)
+summary(var_glm)
+
+head(simulated_data)
+```
+
+# generate crime variable
+```{r}
+# Sigmoid function
+sigmoid <- function(x){
+  1 / (1 + exp(-x))
+}
+
+# calculate linear combinations
+linear_combination <- -0.2 * as.numeric(simulated_data$education) +
+                      -0.00003 * simulated_data$income +
+                      -1.7 * simulated_data$house_ownership +
+                      -0.7 * simulated_data$new_var +
+                      0.0007 * simulated_data$new_var2 +
+                      0.065 * simulated_data$new_var3 +
+                      0.0009 * simulated_data$new_var4
+
+summary(linear_combination)
+
+# apply sigmoid function
+crime_prob <- sigmoid(linear_combination)
+
+# Add noise
+noise <- rnorm(length(crime_prob), mean = 0, sd = 0.05)
+crime_prob <- pmin(pmax(crime_prob + noise, 0), 1)
+
+summary(crime_prob)
+
+# generate binary crime variable based on a threshold
+threshold <- 0.6
+simulated_data$crime <- ifelse(crime_prob > threshold, 1, 0)
+
+# Summarize the new crime variable
+summary(simulated_data$crime)
+table(simulated_data$crime)
+```
+

@@ -1,0 +1,266 @@
+---
+title: "COMPAS pipeline pilot"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up
+```{r}
+## SET THRESHOLD ##
+threshold <- 0.5
+#threshold <- 0.9
+
+## DEFAULT / TUNED MODEL ##
+model <- "untuned"
+#model <- "tuned"
+
+## LINEAR / NON-LINEAR ML-ALGORITHM ##
+#algorithm <- "logistic"
+algorithm <- "rf"
+#algorithm <- "boost"
+```
+
+```{r}
+# load library
+library("mlr3")
+library("tidyverse")
+library("glmnet")
+library("pROC")
+library("randomForest")
+library("gbm")
+
+# load data
+data("compas", package = "mlr3fairness")
+```
+
+# Train/Test split
+```{r}
+# set seed
+set.seed(123)
+
+# set proportion of train/test split
+n <- nrow(compas)
+n_train <- round(n * 0.8)
+
+# sample train indices
+train_index <- sample(1:n, size = n_train)
+
+# obtain train and test set
+compas_train <- compas[train_index,]
+compas_test <- compas[-train_index,]
+```
+
+# Logistic regression model
+```{r}
+if(algorithm == "logistic")
+  {
+  
+  if(model == "untuned")
+    {
+    # default model using all available variables without adjustment
+    logistic <- glm(is_recid ~ c_charge_degree + score_text + priors_count + 
+                    days_b_screening_arrest + decile_score + length_of_stay, 
+                  data = compas_train, family = binomial)
+    
+    # obtain predicted probabilities 
+    probs_logistic <- predict(logistic, newdata = compas_test, type = "response")
+    probs_logistic_train <- predict(logistic, newdata = compas_train, type = "response")
+  
+    } else {
+    # model using relevant variables and interaction terms
+    logistic <- glm(is_recid ~ c_charge_degree + priors_count + 
+                    days_b_screening_arrest + decile_score + priors_count:decile_score, 
+                  data = compas_train, family = binomial)
+    
+    # obtain predicted probabilities
+    probs_logistic <- predict(logistic, newdata = compas_test, type = "response")
+    probs_logistic_train <- predict(logistic, newdata = compas_train, type = "response")
+    }
+  
+  # convert probabilities into binary prediction using decision threshold
+  prediction <- ifelse(probs_logistic > threshold, 1, 0)
+  prediction_train <- ifelse(probs_logistic_train > threshold, 1, 0)
+  
+  # confusion matrix of classification showing TP/FP and TN/FN
+  table(compas_test$is_recid, prediction)
+  
+  # obtain ROC curve and AUC value for the model
+  roc_curve <- roc(compas_test$is_recid, prediction)
+  auc_value <- auc(roc_curve)
+  }
+```
+
+# Random forest 
+```{r}
+if(algorithm == "rf")
+  {
+  if(model == "untuned")
+    {
+    # default random forest
+    rf_model <- randomForest(
+      is_recid ~ c_charge_degree + score_text + priors_count + days_b_screening_arrest + decile_score + length_of_stay,
+      data = compas_train,
+      ntree = 500,         
+      mtry = 3,         
+      importance = TRUE)
+    } else {
+      # random forest optimized for mtry
+      rf_model <- randomForest(
+        is_recid ~ c_charge_degree + score_text + priors_count + days_b_screening_arrest + decile_score + length_of_stay,
+        data = compas_train,
+        ntree = 500,           
+        mtry = 2,             
+        importance = TRUE)
+    }
+  
+  # obtain probabilities from trained model
+  probs_rf <- predict(rf_model, newdata = compas_test, type = "prob")[,2]
+  probs_rf_train <- predict(rf_model, newdata = compas_train, type = "prob")[,2]
+  
+  # convert probabilites into binary predictions based on decision threshold
+  prediction <- ifelse(probs_rf > threshold, 1, 0)
+  prediction_train <- ifelse(probs_rf_train > threshold, 1, 0)
+  
+  # confusion matrix showing TP/FP and TN/FN
+  table(compas_test$is_recid, prediction)
+  
+  # confusion matrix for training data
+  table(compas_train$is_recid, prediction_train)
+  
+  # obtain ROC and AUC
+  roc_curve <- roc(compas_test$is_recid, prediction)
+  auc_value <- auc(roc_curve)
+  }
+```
+
+# Boosting
+```{r}
+if(algorithm == "boost"){
+  if(model == "untuned"){
+    compas_train$is_recid <- as.numeric(compas_train$is_recid) - 1
+    boost_model <- gbm(is_recid ~., data = compas_train, distribution = "bernoulli", n.trees = 5000, interaction.depth = 4)
+    summary(boost_model)
+  } else {
+      compas_train$is_recid <- as.numeric(compas_train$is_recid) - 1
+  boost_model <- gbm(is_recid ~., data = compas_train, distribution = "bernoulli", n.trees = 5000, interaction.depth = 3)
+  summary(boost_model)
+  }
+  
+  # obtain predictions
+  probs_boost <- predict(boost_model, newdata = compas_test, n.trees = 5000, type = "response")
+  probs_boost_train <-  predict(boost_model, newdata = compas_train, n.trees = 5000, type = "response")
+  
+  # convert probabilites into binary predictions based on decision threshold
+  prediction <- ifelse(probs_boost > threshold, 1, 0)
+  prediction_train <- ifelse(probs_boost_train > threshold, 1, 0)
+  
+  # confusion matrix showing TP/FP and TN/FN
+  table(compas_test$is_recid, prediction)
+    
+  # confusion matrix for training data
+  table(compas_train$is_recid, prediction_train)
+  
+  # obtain ROC and AUC
+  roc_curve <- roc(compas_test$is_recid, prediction)
+  auc_value <- auc(roc_curve)
+}
+```
+
+# Inspection of false positive rate
+```{r}
+# AUC value
+cat("AUC: ", auc_value, "\n", "\n")
+
+
+## Benchmark ##
+# confusion matrix
+confusion_matrix_benchmark_train <- table(compas_train$is_recid, prediction_train)
+# calculate false positive rate
+FPR_bench_train <- confusion_matrix_benchmark_train[1,2] / (confusion_matrix_benchmark_train[1,2] + confusion_matrix_benchmark_train[1,1])
+# print result
+cat("TRAIN: Benchmark FPR: ", FPR_bench_train, "\n")
+# calculate false negative rate
+FNR_bench_train <- confusion_matrix_benchmark_train[2,1] / (confusion_matrix_benchmark_train[2,1] + confusion_matrix_benchmark_train[2,2])
+# print result
+cat("TRAIN: Benchmark FNR: ", FNR_bench_train, "\n")
+
+# confusion matrix
+confusion_matrix_benchmark <- table(compas_test$is_recid, prediction)
+# calculate false positive rate
+FPR_bench <- confusion_matrix_benchmark[1,2] / (confusion_matrix_benchmark[1,2] + confusion_matrix_benchmark[1,1])
+# print result
+cat("TEST: Benchmark FPR: ", FPR_bench, "\n")
+# calculate false negative rate
+FNR_bench <- confusion_matrix_benchmark[2,1] / (confusion_matrix_benchmark[2,1] + confusion_matrix_benchmark[2,2])
+# print result
+cat("TEST: Benchmark FNR: ", FNR_bench, "\n", "\n")
+
+## Young, African-American Man (VULNERABLE GROUP) ##
+# filter cases
+vulnerable_group <- compas_train[sex == "Male" & age_cat == "Less than 25" & race == "African-American", ]
+# find indices to filter predictions
+indices <- which(compas_train$sex == "Male" & compas_train$age_cat == "Less than 25" & compas_train$race == "African-American")
+# confusion matrix
+confusion_matrix_vulnerable <- table(vulnerable_group$is_recid, prediction_train[indices])
+# calculate false positive rate
+FPR <- confusion_matrix_vulnerable[1,2] / (confusion_matrix_vulnerable[1,2] + confusion_matrix_vulnerable[1,1])
+# print result
+cat("TRAIN: Vulnerable Group FPR: ", FPR, " - Proportion to benchmark: ", FPR/FPR_bench_train, "\n")
+# calculate false positive rate
+FNR <- confusion_matrix_vulnerable[2,1] / (confusion_matrix_vulnerable[2,1] + confusion_matrix_vulnerable[2,2])
+# print result
+cat("TRAIN: Vulnerable Group FNR: ", FNR, " - Proportion to benchmark: ", FNR/FNR_bench_train, "\n")
+
+# filter cases
+vulnerable_group <- compas_test[sex == "Male" & age_cat == "Less than 25" & race == "African-American", ]
+# find indices to filter predictions
+indices <- which(compas_test$sex == "Male" & compas_test$age_cat == "Less than 25" & compas_test$race == "African-American")
+# confusion matrix
+confusion_matrix_vulnerable <- table(vulnerable_group$is_recid, prediction[indices])
+# calculate false positive rate
+FPR <- confusion_matrix_vulnerable[1,2] / (confusion_matrix_vulnerable[1,2] + confusion_matrix_vulnerable[1,1])
+# print result
+cat("TEST: Vulnerable Group FPR: ", FPR, " - Proportion to benchmark: ", FPR/FPR_bench, "\n")
+# calculate false positive rate
+FNR <- confusion_matrix_vulnerable[2,1] / (confusion_matrix_vulnerable[2,1] + confusion_matrix_vulnerable[2,2])
+# print result
+cat("TEST: Vulnerable Group FNR: ", FNR, " - Proportion to benchmark: ", FNR/FNR_bench_train, "\n", "\n")
+
+
+## Old, Caucasian Women (PRIVELEGED GROUP) ##
+# filter cases
+privileged_group <- compas_train[sex == "Female" & age_cat == "Greater than 45" & race == "Caucasian", ]
+# find indices to filter predictions
+indices <- which(compas_train$sex == "Female" & compas_train$age_cat == "Greater than 45" & compas_train$race == "Caucasian")
+# confusion matrix
+confusion_matrix_privileged <- table(privileged_group$is_recid, prediction_train[indices])
+# calculate false positive rate
+FPR <- confusion_matrix_privileged[1,2] / (confusion_matrix_privileged[1,2] + confusion_matrix_privileged[1,1])
+# print result
+cat("TRAIN: Priveleged Group FPR: ", FPR, " - Proportion to benchmark: ", FPR/FPR_bench_train, "\n")
+# calculate false positive rate
+FNR <- confusion_matrix_privileged[2,1] / (confusion_matrix_privileged[2,1] + confusion_matrix_privileged[2,2])
+# print result
+cat("TRAIN: Priveleged Group FNR: ", FNR, " - Proportion to benchmark: ", FNR/FNR_bench_train, "\n")
+
+# filter cases
+privileged_group <- compas_test[sex == "Female" & age_cat == "Greater than 45" & race == "Caucasian", ]
+# find indices to filter predictions
+indices <- which(compas_test$sex == "Female" & compas_test$age_cat == "Greater than 45" & compas_test$race == "Caucasian")
+# confusion matrix
+confusion_matrix_privileged <- table(privileged_group$is_recid, prediction[indices])
+# calculate false positive rate
+FPR <- confusion_matrix_privileged[1,2] / (confusion_matrix_privileged[1,2] + confusion_matrix_privileged[1,1])
+# print result
+cat("TEST: Priveleged Group FPR: ", FPR, " - Proportion to benchmark: ", FPR/FPR_bench, "\n")
+# calculate false positive rate
+FNR <- confusion_matrix_privileged[2,1] / (confusion_matrix_privileged[2,1] + confusion_matrix_privileged[2,2])
+# print result
+cat("TEST: Priveleged Group FNR: ", FNR, " - Proportion to benchmark: ", FNR/FNR_bench, "\n")
+```
+

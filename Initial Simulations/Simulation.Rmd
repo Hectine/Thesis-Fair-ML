@@ -1,0 +1,170 @@
+---
+title: "Data Simulation - Thesis"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set-up
+```{r}
+# load libraries 
+library(tidyverse)
+library(MASS)
+library(dplyr)
+
+# set seed 
+set.seed(294)
+
+# set number of data points
+n <- 1000
+```
+
+# Generate sensitive attributes
+```{r}
+# gender
+gender <- sample(c("Female", "Male"), n, replace = TRUE)
+
+# ethnicity
+ethnicity <- sample(c("Minority", "Majority"), n, replace = TRUE)
+# ,prob = c(0.35, 0.65)
+
+# disability
+disability <- sample(c("Yes", "No"), n, replace = TRUE)
+# ,prob = c(0.1, 0.9)
+```
+
+# Generate non-biased features and features that later will be biased
+```{r}
+# number of variables 
+n_var = 6
+
+# define mean vector
+mean_vector = rep(0, n_var) # assumes mean = 0 for all variables
+
+# define covariance matrix
+sigma <- matrix(0.6, nrow = n_var, ncol = n_var)
+diag(sigma) <- 1
+
+# generate data
+data <- mvrnorm(n, mean_vector, sigma)
+
+# add noise to the data
+noise <- matrix(rnorm(n * n_var, mean = 0, sd = 0.5), nrow = n, ncol = n_var)
+data <- data + noise
+
+# convert to dataframe and name columns
+data <- as.data.frame(data)
+colnames(data) <- paste0("Var_", 1:n_var)
+
+# add sensitive attributes
+data$gender <- gender
+data$ethnicity <- ethnicity
+data$disability <- disability
+```
+
+# add bias to variables
+```{r}
+# define number of biased variables
+n_var_biased = 2
+
+# define effects of sensitive attributes
+gender_effect <- ifelse(gender == "Female", rnorm(1, mean = -0.6, sd = 0.2), 0)
+ethnicity_effect <- ifelse(ethnicity == "Minority", rnorm(1, mean = -0.6, sd = 0.2), 0)
+disability_effect <- ifelse(disability == "Yes", rnorm(1, mean = -0.6, sd = 0.2), 0)
+
+# calculate effect 
+effect <- gender_effect + ethnicity_effect + disability_effect
+
+# add effect to variables
+for(i in 1:n_var_biased){
+  data[,i] <- data[,i] + effect
+  colnames(data)[i] <- paste0("Biased_Var_", i)
+}
+```
+
+# generate binary outcome
+```{r}
+# assign weights to variables
+weights <- c(1.5, 1.0, 2.0, 1.0, 0.5, 0.5)
+
+# calculate linear combination of weights 
+linear_combination <- weights[1] * data[,1] +
+  weights[2] * data[,2] +
+  weights[3] * data[,3] +
+  weights[4] * data[,4] +
+  weights[5] * data[,5] + 
+  weights[6] * data[,6]
+
+# add noise to model historic data
+linear_combination <- linear_combination + rnorm(n, mean = 0, sd = 0.5)
+
+# adjust to have 0.5 probability 
+intercept_adjustment <- -mean(linear_combination)
+linear_combination <- linear_combination + intercept_adjustment
+
+# calculate outcome probability
+outcome_prob <- 1 / (1 + exp(linear_combination))
+
+# sample outcome
+outcome <- rbinom(n, 1, outcome_prob)
+
+# add outcome to the dataframe
+data$outcome <- outcome
+```
+
+### TRY MODELS ###
+```{r}
+####### TRY MODELS #######
+train <- sample(1:1000, 800)
+data_train <- data[train,]
+data_test <- data[-train,]
+
+# Fit logistic regression model without sensitive attributes
+model <- glm(outcome ~ ., data = data_train, family = binomial)
+predicted_outcome <- predict(model, data_test, type = "response")
+test_outcome <- ifelse(predicted_outcome > 0.5, 1, 0)
+summary(model)
+
+# Model performance
+data$test_outcome <- test_outcome
+confusion_matrix_g <- table(data$outcome, data$test_outcome)
+(confusion_matrix_g[1,1] + confusion_matrix_g[2,2]) / n # accuracy
+confusion_matrix_g[2,1] / n # p false negative
+confusion_matrix_g[1,2] / n # p false positive
+
+# Accuracy for subgroups
+female_data = data[gender == "Female",]
+confusion_matrix_female <- table(female_data$outcome, female_data$test_outcome)
+(confusion_matrix_female[1,1] + confusion_matrix_female[2,2]) / n # accuracy
+confusion_matrix_female[2,1] / n # p false negative
+confusion_matrix_female[1,2] / n # p false positive
+
+minority_data = data[ethnicity == "Minority",]
+confusion_matrix_minority <- table(minority_data$outcome, minority_data$test_outcome)
+(confusion_matrix_minority[1,1] + confusion_matrix_minority[2,2]) / n # accuracy
+confusion_matrix_minority[2,1] / n # p false negative
+confusion_matrix_minority[1,2] / n # p false positive
+
+disability_data = data[disability == "Yes",]
+confusion_matrix_disability <- table(disability_data$outcome, disability_data$test_outcome)
+(confusion_matrix_disability[1,1] + confusion_matrix_disability[2,2]) / n # accuracy
+confusion_matrix_disability[2,1] / n # p false negative
+confusion_matrix_disability[1,2] / n # p false positive
+
+female_minority_data <- data[gender == "Female" & ethnicity == "Minority",]
+confusion_matrix_female_minority <- table(female_minority_data$outcome, female_minority_data$test_outcome)
+(confusion_matrix_female_minority[1,1] + confusion_matrix_female_minority[2,2]) / n # accuracy
+confusion_matrix_female_minority[2,1] / n # p false negative
+confusion_matrix_female_minority[1,2] / n # p false positive
+
+female_disabled <- data[gender == "Female" & disability == "Yes",]
+confusion_matrix_female_disabled <- table(female_disabled$outcome, female_disabled$test_outcome)
+(confusion_matrix_female_disabled[1,1] + confusion_matrix_female_disabled[2,2]) / n # accuracy
+confusion_matrix_female_disabled[2,1] / n # p false negative
+confusion_matrix_female_disabled[1,2] / n # p false positive
+```
+
