@@ -377,4 +377,123 @@ simulated_data$crime <- ifelse(crime_prob > threshold, 1, 0)
 summary(simulated_data$crime)
 table(simulated_data$crime)
 ```
+# Creating missing values
+
+- Case 1: Completely Random Missing Values                        (random)
+- Case 2: Missing Values Based on a Distribution                  (distribution)
+- Case 3: Missing Values Dependent on Other Variables             (dependent)
+- Case 4: Missing Values Dependent on Sensitive Characteristics   (sensitive)
+
+```{r}
+create_missing_values <- function(data, var_names, proportion = NULL, num_missing = NULL, 
+                                  type = c("random", "distribution", "dependent", "sensitive"),
+                                  dist_params = list(), 
+                                  open_var = NULL, 
+                                  sensitive_var = NULL) {
+  
+  # Convert proportion to num_missing if proportion is given
+  if (!is.null(proportion)) {
+    num_missing <- floor(proportion * nrow(data))
+  }
+  
+  if (is.null(num_missing)) {
+    stop("Either proportion or num_missing must be provided.")
+  }
+  
+  # Case 1: Completely Random Missing Values
+  if (type == "random") {
+    for (var_name in var_names) {
+      missing_indices <- sample(1:nrow(data), num_missing, replace = FALSE)
+      data[missing_indices, var_name] <- NA
+    }
+  }
+  
+  # Case 2: Missing Values Based on a Distribution
+  if (type == "distribution") {
+    if (length(var_names) != 1) {
+      stop("For distribution-based missingness, provide exactly one variable.")
+    }
+    
+    var_name <- var_names[1]
+    if (is.numeric(data[[var_name]])) {
+      # Quantile-based probability for continuous variables
+      quantiles <- quantile(data[[var_name]], probs = c(0.25, 0.5, 0.75, 1.0), na.rm = TRUE)
+      probabilities <- c(0.1, 0.3, 0.5, 0.7)  # Example: Increase missingness probability across quantiles
+      data$missing_prob <- cut(data[[var_name]], breaks = c(-Inf, quantiles), labels = probabilities, include.lowest = TRUE)
+      data$missing_prob <- as.numeric(as.character(data$missing_prob))
+    } else {
+      # Category-based probability for categorical variables
+      categories <- levels(factor(data[[var_name]]))
+      probabilities <- seq(0.1, 0.7, length.out = length(categories))
+      prob_map <- setNames(probabilities, categories)
+      data$missing_prob <- prob_map[as.character(data[[var_name]])]
+    }
+    data$missing_prob[is.na(data$missing_prob)] <- 0
+    missing_indices <- order(-data$missing_prob)[1:num_missing]
+    data[missing_indices, var_name] <- NA
+    data$missing_prob <- NULL  # Clean up
+  }
+  
+  # Case 3: Missing Values Dependent on Other Variables
+  if (type == "dependent") {
+    if (is.null(open_var) || length(var_names) != 1) {
+      stop("For dependent missingness, provide exactly one target variable and at least one open_var.")
+    }
+    
+    var_name <- var_names[1]
+    linear_combination <- 0
+    for (var in open_var) {
+      linear_combination <- linear_combination + as.numeric(data[[var]])
+    }
+    probabilities <- 1 / (1 + exp(-linear_combination))  # Sigmoid function to calculate probabilities
+    data$missing_prob <- probabilities
+    missing_indices <- order(-data$missing_prob)[1:num_missing]
+    data[missing_indices, var_name] <- NA
+    data$missing_prob <- NULL  # Clean up
+  }
+  
+  # Case 4: Missing Values Dependent on Sensitive Characteristics
+  if (type == "sensitive") {
+    if (is.null(sensitive_var) || length(var_names) != 1) {
+      stop("For sensitive missingness, provide exactly one target variable and at least one sensitive_var.")
+    }
+    
+    var_name <- var_names[1]
+    linear_combination <- 0
+    for (var in sensitive_var) {
+      linear_combination <- linear_combination + as.numeric(data[[var]])
+    }
+    probabilities <- 1 / (1 + exp(-linear_combination))  # Sigmoid function to calculate probabilities
+    data$missing_prob <- probabilities
+    missing_indices <- order(-data$missing_prob)[1:num_missing]
+    data[missing_indices, var_name] <- NA
+    data$missing_prob <- NULL  # Clean up
+  }
+  
+  return(data)
+}
+
+# Example Usage:
+
+# Adding random missing values
+simulated_data <- create_missing_values(simulated_data, var_names = c("income", "education"), 
+                                        proportion = 0.1, type = "random")
+
+# Adding distribution-based missing values
+simulated_data <- create_missing_values(simulated_data, var_names = "income", 
+                                        num_missing = 500, type = "distribution")
+
+# Adding dependent missing values
+simulated_data <- create_missing_values(simulated_data, var_names = "new_var4", 
+                                        num_missing = 300, type = "dependent", 
+                                        open_var = c("income", "education"))
+
+# Adding sensitive-dependent missing values
+simulated_data <- create_missing_values(simulated_data, var_names = "house_ownership", 
+                                        num_missing = 300, type = "sensitive", 
+                                        sensitive_var = c("gender", "ethnicity"))
+
+# Overview of NA values
+table(is.na(simulated_data))
+```
 

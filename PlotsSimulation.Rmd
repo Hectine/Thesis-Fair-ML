@@ -1,0 +1,126 @@
+---
+title: "visualisation of simulation"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Distribution of variables
+```{r}
+library(ggplot2)
+
+# Plot distribution of income
+ggplot(simulated_data, aes(x = income)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "black") +
+  theme_minimal() +
+  ggtitle("Distribution of Income")
+
+# Plot distribution of crime
+ggplot(simulated_data, aes(x = factor(crime))) +
+  geom_bar(fill = "tomato", color = "black") +
+  theme_minimal() +
+  ggtitle("Distribution of Crime") +
+  xlab("Crime (0 = No, 1 = Yes)")
+
+# Plot distribution of education levels
+ggplot(simulated_data, aes(x = education)) +
+  geom_bar(fill = "forestgreen", color = "black") +
+  theme_minimal() +
+  ggtitle("Distribution of Education Levels") +
+  xlab("Education")
+
+```
+
+# Crime vs. categorical variables
+```{r}
+# Crime vs. Gender
+ggplot(simulated_data, aes(x = gender, fill = factor(crime))) +
+  geom_bar(position = "dodge") +
+  theme_minimal() +
+  ggtitle("Crime vs. Gender") +
+  labs(fill = "Crime")
+
+# Crime vs. Ethnicity
+ggplot(simulated_data, aes(x = ethnicity, fill = factor(crime))) +
+  geom_bar(position = "dodge") +
+  theme_minimal() +
+  ggtitle("Crime vs. Ethnicity") +
+  labs(fill = "Crime")
+
+# Crime vs. Education
+ggplot(simulated_data, aes(x = education, fill = factor(crime))) +
+  geom_bar(position = "dodge") +
+  theme_minimal() +
+  ggtitle("Crime vs. Education Level") +
+  labs(fill = "Crime")
+
+```
+
+# Crime vs. continous variables
+```{r}
+# Crime vs. Income
+ggplot(simulated_data, aes(x = income, y = as.numeric(crime))) +
+  geom_jitter(alpha = 0.2) +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  theme_minimal() +
+  ggtitle("Crime vs. Income") +
+  ylab("Crime (0 = No, 1 = Yes)")
+
+# Crime vs. New Variable 2
+ggplot(simulated_data, aes(x = new_var2, y = as.numeric(crime))) +
+  geom_jitter(alpha = 0.2) +
+  geom_smooth(method = "loess", se = FALSE, color = "blue") +
+  theme_minimal() +
+  ggtitle("Crime vs. New Variable 2") +
+  ylab("Crime (0 = No, 1 = Yes)")
+
+```
+
+# Correlation matrix
+```{r}
+library(corrplot)
+
+# Select numeric variables for correlation matrix
+numeric_vars <- simulated_data %>%
+  select_if(is.numeric)
+
+# Calculate correlation matrix
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+# Plot correlation matrix
+corrplot(cor_matrix, method = "color", type = "upper", 
+         tl.col = "black", tl.srt = 45, 
+         title = "Correlation Matrix of Numeric Variables")
+
+```
+
+# Boxplots
+```{r}
+# Income vs. Crime
+ggplot(simulated_data, aes(x = factor(crime), y = income, fill = factor(crime))) +
+  geom_boxplot() +
+  theme_minimal() +
+  ggtitle("Income Distribution by Crime Status") +
+  xlab("Crime (0 = No, 1 = Yes)") +
+  ylab("Income")
+```
+# Heatmap of crime probability
+```{r}
+# Create a summary table of average crime probability
+crime_summary <- simulated_data %>%
+  group_by(education, gender) %>%
+  summarize(avg_crime = mean(crime))
+
+# Plot heatmap
+ggplot(crime_summary, aes(x = education, y = gender, fill = avg_crime)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "red") +
+  theme_minimal() +
+  ggtitle("Heatmap of Crime Probability by Education and Gender")
+
+```
+
