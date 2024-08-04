@@ -1,0 +1,466 @@
+---
+title: "Analysis of simulated data"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(randomForest)
+library(pROC)
+library(e1071)
+library(xgboost)
+library(ada)
+```
+
+# Analysis set-up
+```{r}
+# Model choice
+# - logistic
+# - random_forest
+# - svm
+# - xgboost
+# - adaboost
+algorithm <- "adaboost"
+
+# Tuned model
+# indicates whether (hyper-)parameters of the model are optimized (when set TRUE)
+tuned <- FALSE
+
+# Threshold setting
+# sets decision boundary on when a case is classified as criminal or not
+threshold <- 0.5
+```
+
+# Train/Test split
+```{r}
+# set data
+data <- simulated_data
+
+# set seed
+set.seed(123)
+
+# set proportion of train/test split
+n <- nrow(data)
+n_train <- round(n * 0.8)
+
+# sample train indices
+train_index <- sample(1:n, size = n_train)
+
+# obtain train and test set
+data_train <- data[train_index,]
+data_test <- data[-train_index,]
+```
+
+# Logistic regression
+```{r}
+if(algorithm == "logistic"){
+  
+  # apply default logistic regression
+  model <- glm(crime ~ ., data = data_train[,4:11], family = "binomial")
+  
+  # obtain predicted probabilities for the training data
+  probabilities_train <- predict(model, newdata = data_train, type = "response")
+  
+  # obtain predicted probabilities for the test data
+  probabilities_test <- predict(model, newdata = data_test, type = "response")
+}
+```
+
+# Random Forest
+```{r}
+if(algorithm == "random_forest"){
+  
+  # apply default random forest
+  model <- randomForest(as.factor(crime) ~ ., data = data_train[,4:11])
+  
+  # obtain predicted probabilities for the training data
+  probabilities_train <- predict(model, newdata = data_train, type = "prob")[,2]
+  
+  # obtain predicted probabilities for the test data
+  probabilities_test <- predict(model, newdata = data_test, type = "prob")[,2]
+}
+```
+
+# Support vector machnine
+```{r}
+if (algorithm == "svm") {
+
+  # Fit the SVM model (using a radial basis kernel as default)
+  model <- svm(as.factor(crime) ~ ., data = data_train[,4:11], probability = TRUE)
+  
+  # Obtain predicted probabilities for the training data
+  probabilities_train <- attr(predict(model, newdata = data_train, probability = TRUE), "probabilities")[,1]
+  
+  # Obtain predicted probabilities for the test data
+  probabilities_test <- attr(predict(model, newdata = data_test, probability = TRUE), "probabilities")[,1]
+}
+```
+
+# XGboost
+```{r}
+if (algorithm == "xgboost") {
+
+  # Convert data to numeric matrix, converting factors/characters to numeric
+  train_matrix <- data.matrix(data_train[, 4:11])
+  test_matrix <- data.matrix(data_test[, 4:11])
+  
+  # Convert target variable to numeric and ensure it is binary (0 and 1)
+  train_label <- as.numeric(as.factor(data_train$crime)) - 1 # Assumes 'crime' is a factor or character
+  test_label <- as.numeric(as.factor(data_test$crime)) - 1
+  
+  # Ensure labels are binary (0 and 1)
+  if (any(train_label < 0 | train_label > 1) || any(test_label < 0 | test_label > 1)) {
+    stop("Labels must be binary (0 and 1).")
+  }
+
+  # Create DMatrix objects for XGBoost
+  dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
+  dtest <- xgb.DMatrix(data = test_matrix, label = test_label)
+  
+  # Set default parameters for XGBoost
+  params <- list(
+    objective = "binary:logistic",
+    eval_metric = "logloss"
+  )
+  
+  # Train the XGBoost model
+  model <- xgboost(params = params, data = dtrain, nrounds = 100, verbose = 0)
+  
+  # Obtain predicted probabilities for the training data
+  probabilities_train <- predict(model, dtrain)
+  
+  # Obtain predicted probabilities for the test data
+  probabilities_test <- predict(model, dtest)
+}
+```
+
+# Adaboost
+```{r}
+if (algorithm == "adaboost") {
+  
+  # Ensure the target variable is binary (0 and 1)
+  train_label <- as.numeric(as.factor(data_train$crime)) - 1 # Assumes 'crime' is a factor or character
+  test_label <- as.numeric(as.factor(data_test$crime)) - 1
+
+  # Ensure labels are binary (0 and 1)
+  if (any(train_label < 0 | train_label > 1) || any(test_label < 0 | test_label > 1)) {
+    stop("Labels must be binary (0 and 1).")
+  }
+  
+  # Prepare the training and test data
+  train_data <- data_train[, 4:11]
+  test_data <- data_test[, 4:11]
+  
+  # Fit the AdaBoost model
+  model <- ada(x = train_data, y = train_label, iter = 50, nu = 0.1, type = "real")
+  
+  # Obtain predicted probabilities for the training data
+  probabilities_train <- predict(model, newdata = train_data, type = "prob")[,2]
+  
+  # Obtain predicted probabilities for the test data
+  probabilities_test <- predict(model, newdata = test_data, type = "prob")[,2]
+}
+```
+
+# Obtain binary crime classification for test and training data
+```{r}
+  # convert training data probabilities into binary depending on threshold
+  prediction_train <- ifelse(probabilities_train >= threshold, 1, 0)
+  
+  # convert test data probabilities into binary depending on threshold
+  prediction_test <- ifelse(probabilities_test >= threshold, 1, 0)
+
+  # confusion matrix of classification showing TP/FP and TN/FN for training data
+  cm_train <- table(data_train$crime, prediction_train)
+  
+  # confusion matrix of classification showing TP/FP and TN/FN for test data
+  cm_test <- table(data_test$crime, prediction_test)
+```
+
+# Inspect model efficiency (ROC & AUC)
+```{r}
+# obtain ROC
+roc_curve <- roc(data_test$crime, prediction_test)
+
+# obtain AUC
+auc_value <- auc(roc_curve)
+
+# Accuracy (training data)
+accuracy_train <- (cm_train[1,1] + cm_train[2,2]) / sum(cm_train)
+
+# Accuracy (test data)
+accuracy_test <- (cm_test[1,1] + cm_test[2,2]) / sum(cm_test)
+
+# print output
+cat("### Model performance ###", "\nThe Area under the Curve is:", round(auc_value, 3), "\nAccuracy (training):",
+    accuracy_train, "\nAccuracy (test):", accuracy_test)
+```
+
+# Generation of confusion matrix for single sensitive attribute comparisons (gender, disability, ethnicity)
+```{r}
+# 1. Gender comparison
+# Index selection
+indices_train_male <- which(data_train$gender == "Male")
+indices_test_male <- which(data_test$gender == "Male")
+indices_train_female <- which(data_train$gender == "Female")
+indices_test_female <- which(data_test$gender == "Female")
+
+# Confusion matrix
+cm_train_male <- table(data_train[indices_train_male,]$crime, prediction_train[indices_train_male])
+cm_train_female <- table(data_train[indices_train_female,]$crime, prediction_train[indices_train_female])
+cm_test_male <- table(data_test[indices_test_male,]$crime, prediction_test[indices_test_male])
+cm_test_female <- table(data_test[indices_test_female,]$crime, prediction_test[indices_test_female])
+
+# 2. Disability comparison
+# Index selection
+indices_train_disabled <- which(data_train$disability == "Yes")
+indices_test_disabled <- which(data_test$disability == "Yes")
+indices_train_abled <- which(data_train$disability == "No")
+indices_test_abled <- which(data_test$disability == "No")
+
+# Confusion matrix
+cm_train_disabled <- table(data_train[indices_train_disabled,]$crime, prediction_train[indices_train_disabled])
+cm_train_abled <- table(data_train[indices_train_abled,]$crime, prediction_train[indices_train_abled])
+cm_test_disabled <- table(data_test[indices_test_disabled,]$crime, prediction_test[indices_test_disabled])
+cm_test_abled <- table(data_test[indices_test_abled,]$crime, prediction_test[indices_test_abled])
+
+# 3. Ethnicity comparison
+# Index selection
+indices_train_minority <- which(data_train$ethnicity == "Minority")
+indices_test_minority <- which(data_test$ethnicity == "Minority")
+indices_train_majority <- which(data_train$ethnicity == "Majority")
+indices_test_majority <- which(data_test$ethnicity == "Majority")
+
+# Confusion matrix
+cm_train_minority <- table(data_train[indices_train_minority,]$crime, prediction_train[indices_train_minority])
+cm_train_majority <- table(data_train[indices_train_majority,]$crime, prediction_train[indices_train_majority])
+cm_test_minority <- table(data_test[indices_test_minority,]$crime, prediction_test[indices_test_minority])
+cm_test_majority <- table(data_test[indices_test_majority,]$crime, prediction_test[indices_test_majority])
+```
+
+# Benchmark metric
+```{r}
+# Calculate Benchmark metrics for training data
+proportion_favorable_benchmark_train <- sum(cm_train[,1]) / sum(cm_train)
+FPR_benchmark_train <- cm_train[1,2] / (cm_train[1,2] + cm_train[1,1])
+FNR_benchmark_train <- cm_train[2,1] / (cm_train[2,1] + cm_train[2,2])
+
+# Calculate Benchmark metrics for test data
+proportion_favorable_benchmark_test <- sum(cm_test[,1]) / sum(cm_test)
+FPR_benchmark_test <- cm_test[1,2] / (cm_test[1,2] + cm_test[1,1])
+FNR_benchmark_test <- cm_test[2,1] / (cm_test[2,1] + cm_test[2,2])
+
+# Output
+cat("### Benchmark fairness measures ###\n\n1.Training Data\n- Demographic Parity:",
+    round(proportion_favorable_benchmark_train,3),
+    "\n- FPR:", round(FPR_benchmark_train,3), "\n- FNR:", round(FNR_benchmark_train,3),
+    "\n\n2.Test Data\n- Demographic Parity:",
+    round(proportion_favorable_benchmark_test,3), "\n- FPR:", 
+    round(FPR_benchmark_test,3), "\n- FNR:", round(FNR_benchmark_test,3))
+```
+
+# Function to calculate fairness metrics 
+```{r}
+# Function to calculate fairness metrics for a given confusion matrix
+calculate_metrics <- function(cm, cm_benchmark) {
+  # Initialize variables for metrics
+  proportion_favorable <- NA
+  FPR <- NA
+  FNR <- NA
+  
+  # Check if the confusion matrix has the expected dimensions (2x2)
+  if (all(dim(cm) == c(2, 2))) {
+    # Calculate Proportion of Favorable Outcome (Demographic Parity)
+    proportion_favorable <- sum(cm[,1]) / sum(cm)
+    
+    # Calculate False Positive Rate (FPR)
+    if ((cm[1,2] + cm[1,1]) > 0) {
+      FPR <- cm[1,2] / (cm[1,2] + cm[1,1])
+    }
+    
+    # Calculate False Negative Rate (FNR)
+    if ((cm[2,1] + cm[2,2]) > 0) {
+      FNR <- cm[2,1] / (cm[2,1] + cm[2,2])
+    }
+  }
+  
+  # Calculate Benchmark metrics
+  proportion_favorable_benchmark <- sum(cm_benchmark[,1]) / sum(cm_benchmark)
+  FPR_benchmark <- cm_benchmark[1,2] / (cm_benchmark[1,2] + cm_benchmark[1,1])
+  FNR_benchmark <- cm_benchmark[2,1] / (cm_benchmark[2,1] + cm_benchmark[2,2])
+
+  # Calculate ratios relative to the benchmark
+  proportion_favorable_ratio <- if (!is.na(proportion_favorable)) proportion_favorable / proportion_favorable_benchmark else NA
+  FPR_ratio <- if (!is.na(FPR)) FPR / FPR_benchmark else NA
+  FNR_ratio <- if (!is.na(FNR)) FNR / FNR_benchmark else NA
+  
+  return(list(proportion_favorable = proportion_favorable, proportion_favorable_ratio = proportion_favorable_ratio, 
+              FPR = FPR, FPR_ratio = FPR_ratio, 
+              FNR = FNR, FNR_ratio = FNR_ratio))
+}
+```
+
+# Calculation and display of the three fairness metrics for single senstive attribute comparisons
+```{r}
+# Function to display the results in a structured format
+display_results <- function(subpop, metrics_train, metrics_test) {
+  cat("### Results for:", subpop, "###\n")
+  
+  cat("Training Data:\n")
+  cat("1. Proportion of Favorable Outcome (Demographic Parity):", metrics_train$proportion_favorable, 
+      "(Ratio to Benchmark:", metrics_train$proportion_favorable_ratio, ")\n")
+  cat("2. False Positive Rate (FPR):", metrics_train$FPR, 
+      "(Ratio to Benchmark:", metrics_train$FPR_ratio, ")\n")
+  cat("3. False Negative Rate (FNR):", metrics_train$FNR, 
+      "(Ratio to Benchmark:", metrics_train$FNR_ratio, ")\n\n")
+  
+  cat("Test Data:\n")
+  cat("1. Proportion of Favorable Outcome (Demographic Parity):", metrics_test$proportion_favorable, 
+      "(Ratio to Benchmark:", metrics_test$proportion_favorable_ratio, ")\n")
+  cat("2. False Positive Rate (FPR):", metrics_test$FPR, 
+      "(Ratio to Benchmark:", metrics_test$FPR_ratio, ")\n")
+  cat("3. False Negative Rate (FNR):", metrics_test$FNR, 
+      "(Ratio to Benchmark:", metrics_test$FNR_ratio, ")\n\n")
+}
+
+# Calculate benchmark metrics
+cm_train <- table(data_train$crime, prediction_train)
+cm_test <- table(data_test$crime, prediction_test)
+
+# Gender comparison
+metrics_train_male <- calculate_metrics(cm_train_male, cm_train)
+metrics_test_male <- calculate_metrics(cm_test_male, cm_test)
+
+metrics_train_female <- calculate_metrics(cm_train_female, cm_train)
+metrics_test_female <- calculate_metrics(cm_test_female, cm_test)
+
+# Display results for gender comparison
+display_results("Male", metrics_train_male, metrics_test_male)
+display_results("Female", metrics_train_female, metrics_test_female)
+
+# Disability comparison
+metrics_train_disabled <- calculate_metrics(cm_train_disabled, cm_train)
+metrics_test_disabled <- calculate_metrics(cm_test_disabled, cm_test)
+
+metrics_train_abled <- calculate_metrics(cm_train_abled, cm_train)
+metrics_test_abled <- calculate_metrics(cm_test_abled, cm_test)
+
+# Display results for disability comparison
+display_results("Disabled", metrics_train_disabled, metrics_test_disabled)
+display_results("Non-Disabled", metrics_train_abled, metrics_test_abled)
+
+# Ethnicity comparison
+metrics_train_minority <- calculate_metrics(cm_train_minority, cm_train)
+metrics_test_minority <- calculate_metrics(cm_test_minority, cm_test)
+
+metrics_train_majority <- calculate_metrics(cm_train_majority, cm_train)
+metrics_test_majority <- calculate_metrics(cm_test_majority, cm_test)
+
+# Display results for ethnicity comparison
+display_results("Minority", metrics_train_minority, metrics_test_minority)
+display_results("Majority", metrics_train_majority, metrics_test_majority)
+```
+
+# Function to find most advantages and disadvantaged subpopulations 
+```{r}
+# Function to find the most privileged and most disadvantaged subpopulations
+find_extremes <- function(metrics_list) {
+  most_privileged <- list(FPR = NULL, FNR = NULL, Demographic_Parity = NULL)
+  most_disadvantaged <- list(FPR = NULL, FNR = NULL, Demographic_Parity = NULL)
+  
+  min_FPR <- min(sapply(metrics_list, function(x) x$FPR), na.rm = TRUE)
+  max_FNR <- max(sapply(metrics_list, function(x) x$FNR), na.rm = TRUE)
+  max_DP <- max(sapply(metrics_list, function(x) x$proportion_favorable), na.rm = TRUE)
+  
+  max_FPR <- max(sapply(metrics_list, function(x) x$FPR), na.rm = TRUE)
+  min_FNR <- min(sapply(metrics_list, function(x) x$FNR), na.rm = TRUE)
+  min_DP <- min(sapply(metrics_list, function(x) x$proportion_favorable), na.rm = TRUE)
+  
+  for (subpop in names(metrics_list)) {
+    metrics <- metrics_list[[subpop]]
+    
+    # Safely compare metrics, only if they are not NA
+    if (!is.na(metrics$FPR) && metrics$FPR == min_FPR) most_privileged$FPR <- subpop
+    if (!is.na(metrics$FNR) && metrics$FNR == max_FNR) most_privileged$FNR <- subpop
+    if (!is.na(metrics$proportion_favorable) && metrics$proportion_favorable == max_DP) most_privileged$Demographic_Parity <- subpop
+    
+    if (!is.na(metrics$FPR) && metrics$FPR == max_FPR) most_disadvantaged$FPR <- subpop
+    if (!is.na(metrics$FNR) && metrics$FNR == min_FNR) most_disadvantaged$FNR <- subpop
+    if (!is.na(metrics$proportion_favorable) && metrics$proportion_favorable == min_DP) most_disadvantaged$Demographic_Parity <- subpop
+  }
+  
+  return(list(most_privileged = most_privileged, most_disadvantaged = most_disadvantaged))
+}
+```
+
+# Assessment of fairness metrics on fine-grained subpopulations
+```{r}
+# Calculate benchmark metrics
+cm_train <- table(data_train$crime, prediction_train)
+cm_test <- table(data_test$crime, prediction_test)
+
+# Create a list to store metrics for all subpopulations
+subpop_metrics_train <- list()
+subpop_metrics_test <- list()
+
+# Iterate over combinations of Gender, Ethnicity, and Disability
+for (gender in c("Male", "Female")) {
+  for (ethnicity in c("Minority", "Majority")) {
+    for (disability in c("Yes", "No")) {
+      subpop <- paste(gender, ethnicity, disability, sep = "_")
+      
+      # Index selection
+      indices_train <- which(data_train$gender == gender & data_train$ethnicity == ethnicity & data_train$disability == disability)
+      indices_test <- which(data_test$gender == gender & data_test$ethnicity == ethnicity & data_test$disability == disability)
+      
+      # Confusion matrix
+      cm_train_subpop <- table(data_train[indices_train,]$crime, prediction_train[indices_train])
+      cm_test_subpop <- table(data_test[indices_test,]$crime, prediction_test[indices_test])
+      
+      # Calculate metrics
+      metrics_train <- calculate_metrics(cm_train_subpop, cm_train)
+      metrics_test <- calculate_metrics(cm_test_subpop, cm_test)
+      
+      # Store metrics
+      subpop_metrics_train[[subpop]] <- metrics_train
+      subpop_metrics_test[[subpop]] <- metrics_test
+      
+      # Display results
+      display_results(subpop, metrics_train, metrics_test)
+    }
+  }
+}
+
+# Find the most privileged and most disadvantaged subpopulations
+extremes_train <- find_extremes(subpop_metrics_train)
+extremes_test <- find_extremes(subpop_metrics_test)
+
+# Display the most privileged and disadvantaged subpopulations
+cat("\n### Most Privileged Subpopulations (Training Data) ###\n")
+cat("1. Lowest FPR:", extremes_train$most_privileged$FPR, "\n")
+cat("2. Highest FNR (most desirable):", extremes_train$most_privileged$FNR, "\n")
+cat("3. Highest Proportion of Favorable Outcome (Demographic Parity):", extremes_train$most_privileged$Demographic_Parity, "\n")
+
+cat("\n### Most Disadvantaged Subpopulations (Training Data) ###\n")
+cat("1. Highest FPR:", extremes_train$most_disadvantaged$FPR, "\n")
+cat("2. Lowest FNR (least desirable):", extremes_train$most_disadvantaged$FNR, "\n")
+cat("3. Lowest Proportion of Favorable Outcome (Demographic Parity):", extremes_train$most_disadvantaged$Demographic_Parity, "\n")
+
+cat("\n### Most Privileged Subpopulations (Test Data) ###\n")
+cat("1. Lowest FPR:", extremes_test$most_privileged$FPR, "\n")
+cat("2. Highest FNR (most desirable):", extremes_test$most_privileged$FNR, "\n")
+cat("3. Highest Proportion of Favorable Outcome (Demographic Parity):", extremes_test$most_privileged$Demographic_Parity, "\n")
+
+cat("\n### Most Disadvantaged Subpopulations (Test Data) ###\n")
+cat("1. Highest FPR:", extremes_test$most_disadvantaged$FPR, "\n")
+cat("2. Lowest FNR (least desirable):", extremes_test$most_disadvantaged$FNR, "\n")
+cat("3. Lowest Proportion of Favorable Outcome (Demographic Parity):", extremes_test$most_disadvantaged$Demographic_Parity, "\n")
+```
+

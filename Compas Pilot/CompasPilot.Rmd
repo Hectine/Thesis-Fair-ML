@@ -264,3 +264,4 @@ FNR <- confusion_matrix_privileged[2,1] / (confusion_matrix_privileged[2,1] + co
 cat("TEST: Priveleged Group FNR: ", FNR, " - Proportion to benchmark: ", FNR/FNR_bench, "\n")
 ```
 
+

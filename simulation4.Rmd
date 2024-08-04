@@ -9,7 +9,14 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Overview
+This R script is designed to simulate a dataset with various socioeconomic variables, apply different methods to generate missing data, and create new variables based on specified functions and relationships. The script is structured to systematically create data, introduce missingness in a controlled way, and explore the relationships between variables. The results are summarized using statistical models and tables to evaluate the impacts of these simulated processes.
+
 # Initial set-up
+This section: 
+- loads necessary libraries, 
+- sets a random seed for reproducibility, 
+- and defines the number of data points (n = 10000) to be simulated.
 ```{r}
 # load libraries 
 library(tidyverse)
@@ -23,7 +30,35 @@ set.seed(294)
 n <- 10000
 ```
 
-# generate protected attributes
+# Set-up for data traits
+This code block sets up parameters for adding noise to specific variables (noise_income, noise_house_ownership, and noise_crime), which introduces variability into the dataset. It also defines whether a non-linear relationship should be introduced between income and sensitive attributes or education (non_linear_income). Additionally, it includes a flag (missing_data) to indicate whether missing values should be introduced into the dataset.
+
+The code also includes a parameter to control the non-linearity of the decision boundary (non_linear). Lastly, it sets up the threshold for crime scarcity based on a target crime rate (target_crime_rate), which adjusts the outcome distribution based on the desired crime rate within the dataset.
+```{r}
+# Noise set-up
+noise_income <- 5000
+noise_house_ownership <- 0.05
+noise_crime <- 0.05
+
+# Relationship of income to sensitive attributes and education
+# linear relationship when set FALSE; else non-linearity introduced in form of interactions
+non_linear_income <- TRUE
+
+# missing data points set-up
+# TRUE when dataset should contain missing values
+missing_data <- FALSE
+
+# Set-up for decision boundary
+# Set to TRUE for non-linear decision boundary, FALSE for linear
+non_linear <- TRUE 
+
+# Scarcity of crime outcome
+# Adjust threshold based on desired scarcity (e.g., target 10% crime rate)
+target_crime_rate <- 0.5
+```
+
+# Generate protected attributes
+This section simulates protected attributes (gender, ethnicity, disability) for the dataset using predefined probabilities. These attributes will be used later to influence other variables in the dataset, such as education and income.
 ```{r}
 # gender
 gender <- as.factor(sample(c("Female", "Male"), n, replace = TRUE))
@@ -38,7 +73,8 @@ disability <- sample(c("Yes", "No"), n, replace = TRUE, prob = c(0.07, 0.93))
 education_levels <- c("No High School", "High School", "Some College", "Bachelor's", "Master's", "Doctorate")
 ```
 
-# education variable based on sensitive attributes
+# Education variable based on sensitive attributes
+Here, the education levels are generated for each individual in the dataset based on their gender, ethnicity, and disability status. The probability of attaining different education levels varies depending on these protected attributes, simulating potential societal disparities.
 ```{r}
 # Generate education levels with different probabilities for gender, ethnicity, and disability
 education <- mapply(function(g, e, d) {
@@ -59,6 +95,7 @@ education <- factor(education, levels = education_levels)
 ```
 
 # Create a data frame with the simulated data
+This section creates a data frame simulated_data containing the generated attributes and uses tables to summarize the distribution of education levels across gender, ethnicity, and disability groups.
 ```{r}
 simulated_data <- data.frame(gender = gender, ethnicity = ethnicity, disability = disability, education = education)
 
@@ -66,9 +103,129 @@ table(simulated_data$gender, simulated_data$education)
 table(simulated_data$ethnicity, simulated_data$education)
 table(simulated_data$disability, simulated_data$education)
 ```
+# Function for noise and probability handling
+This code block defines a utility function, apply_noise_or_adjust_prob, which adds noise to a given variable, adjusts probabilities within specified bounds, and optionally applies a sigmoid transformation. It also allows for reproducibility by setting a random seed if provided.
+```{r}
+# Utility function to handle noise and probabilities
+apply_noise_or_adjust_prob <- function(input_var, noise_sd = 0, prob_adjustment = 0, min_prob = 0, max_prob = 1, apply_sigmoid = FALSE, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
+  
+  if (noise_sd > 0) {
+    noise <- rnorm(length(input_var), mean = 0, sd = noise_sd)
+    input_var <- input_var + noise
+  }
+  
+  if (prob_adjustment != 0) {
+    input_var <- input_var + prob_adjustment
+    input_var <- pmin(pmax(input_var, min_prob), max_prob)
+  }
+  
+  if (apply_sigmoid) {
+    input_var <- 1 / (1 + exp(-input_var))
+  }
+  
+  return(input_var)
+}
+```
 
 # income variable based on sensitive attributes and education
+Income is generated by combining a base income with various effects (gender, ethnicity, disability, education) and interaction effects. Noise is added to introduce variability, and summaries of income across different groups are provided to analyze disparities.
 ```{r}
+# Base income setup
+base_income <- 30000
+
+# Gender effect (Females earn less than Males)
+gender_effect <- ifelse(gender == "Male", 7000, -3000)
+
+# Ethnicity effect (Minorities earn less, mitigated by high education)
+ethnicity_effect <- ifelse(ethnicity == "Minority", -5000, 0)
+education_mitigation <- ifelse(education %in% c("Master's", "Doctorate"), 5000, 0)
+ethnicity_effect <- ethnicity_effect + education_mitigation
+
+# Disability effect (People with disabilities earn less)
+disability_effect <- ifelse(disability == "Yes", -7000, 0)
+
+# Education effect (Higher education corresponds to higher income)
+education_effect <- sapply(education, function(e) {
+  switch(as.character(e),
+         "No High School" = 0,
+         "High School" = 5000,
+         "Some College" = 10000,
+         "Bachelor's" = 20000,
+         "Master's" = 35000,
+         "Doctorate" = 50000)
+})
+
+if(non_linear_income == TRUE){
+  # Interaction effects for non-linear relationships
+  interaction_effect <- mapply(function(g, e, et, d) {
+    interaction_val <- 0
+    
+    # Interaction between gender and education
+    if (g == "Female") {
+      interaction_val <- interaction_val - (as.numeric(e) * 500)
+    }
+    
+    # Interaction between ethnicity and education
+    if (et == "Minority") {
+      interaction_val <- interaction_val - (as.numeric(e) * 300)
+    }
+    
+    # Interaction between disability and education
+    if (d == "Yes") {
+      interaction_val <- interaction_val - (as.numeric(e) * 200)
+    }
+    
+    # Non-linear effect (example: square of education effect)
+    if (non_linear) {
+      interaction_val <- interaction_val + (as.numeric(e)^2 * 100)
+    }
+    
+    return(interaction_val)
+  }, gender, education, ethnicity, disability)
+}
+
+# Calculate the income
+income <- base_income + gender_effect + ethnicity_effect + disability_effect + education_effect
+
+# Add non-linear relationship (interaction effect)
+if(non_linear_income == TRUE){
+  income <- income + interaction_effect
+}
+
+# Add noise to the income
+income <- apply_noise_or_adjust_prob(income, noise_sd = noise_income, seed = 456)
+
+# Add income to the data frame
+simulated_data$income <- income
+
+# Summaries
+print("Income of whole population")
+summary(simulated_data$income)
+print("Income male population")
+summary(simulated_data[simulated_data$gender == "Male",]$income)
+print("Income female population")
+summary(simulated_data[simulated_data$gender == "Female",]$income)
+print("Income majority population")
+summary(simulated_data[simulated_data$ethnicity == "Majority",]$income)
+print("Income minority population")
+summary(simulated_data[simulated_data$ethnicity == "Minority",]$income)
+print("Income population with disability")
+summary(simulated_data[simulated_data$disability == "Yes",]$income)
+print("Income population without disability")
+summary(simulated_data[simulated_data$disability == "No",]$income)
+print("Income of non-disabled, majority man")
+summary(simulated_data[simulated_data$gender == "Male" & simulated_data$disability == "No" & simulated_data$ethnicity == "Majority",]$income)
+print("Income of non-disabled, majority woman")
+summary(simulated_data[simulated_data$gender == "Female" & simulated_data$disability == "No" & simulated_data$ethnicity == "Majority",]$income)
+print("Income of non-disabled, minority woman")
+summary(simulated_data[simulated_data$gender == "Female" & simulated_data$disability == "No" & simulated_data$ethnicity == "Minority",]$income)
+
+# Plot income distribution
+hist(simulated_data$income)
+```
+# Former income variable generation
+```{#r}
 # Define base income, gender effect, education effect, ethnicity effect, disability effect, and interaction effects
 base_income <- 30000
 
@@ -153,12 +310,12 @@ interaction_effect <- mapply(function(g, e, et, d) {
   }
 }, gender, education, ethnicity, disability)
 
-# Add noise to the income
-set.seed(456)  # Setting seed for reproducibility
-noise <- rnorm(n, mean = 0, sd = 5000)
 
 # Calculate the income
-income <- base_income + gender_effect + ethnicity_effect + disability_effect + education_effect + interaction_effect + noise
+income <- base_income + gender_effect + ethnicity_effect + disability_effect + education_effect + interaction_effect
+
+# Add noise to the income using utility function
+income <- apply_noise_or_adjust_prob(income, noise_sd = noise_income, seed = 456)
 
 # Add income to the data frame
 simulated_data$income <- income
@@ -171,15 +328,19 @@ summary(simulated_data[simulated_data$ethnicity == "Majority",])
 summary(simulated_data[simulated_data$ethnicity == "Minority",])
 summary(simulated_data[simulated_data$disability == "Yes",])
 summary(simulated_data[simulated_data$disability == "No",])
+
+hist(simulated_data$income)
 ```
 
-# test relationships to income
+# Test relationships to income
+A generalized linear model (GLM) is fitted to assess the relationship between income and the other variables in the dataset.
 ```{r}
 model_income <- glm(income ~ ., data = simulated_data)
 summary(model_income)
 ```
 
 # House ownership variable
+This section generates a binary house ownership variable based on education level and adjusted by income. Probabilities are defined, noise is added, and the results are summarized in tables to explore relationships between house ownership and other variables.
 ```{r}
 # Define base probabilities for house ownership by education
 base_probabilities <- sapply(education, function(e) {
@@ -196,13 +357,8 @@ base_probabilities <- sapply(education, function(e) {
 income_effect <- (income - mean(income)) / sd(income) * 0.1
 ownership_probabilities <- base_probabilities + income_effect
 
-# Add noise to the probabilities
-set.seed(789)  # Setting seed for reproducibility
-prob_noise <- rnorm(n, mean = 0, sd = 0.05)
-ownership_probabilities <- ownership_probabilities + prob_noise
-
-# Ensure probabilities are between 0 and 1
-ownership_probabilities <- pmin(pmax(ownership_probabilities, 0), 1)
+# Adjust probabilities for house ownership using utility function
+ownership_probabilities <- apply_noise_or_adjust_prob(ownership_probabilities, noise_sd = noise_house_ownership, min_prob = 0, max_prob = 1, seed = 789)
 
 # Determine house ownership using a threshold
 set.seed(101112)  # Setting seed for reproducibility
@@ -217,9 +373,10 @@ table(simulated_data$house_ownership, simulated_data$education)
 table(simulated_data$disability, simulated_data$house_ownership)
 table(simulated_data$ethnicity, simulated_data$house_ownership)
 ```
-# function to generate new variable
+# Function to generate new variable
+A custom function generate_new_variable is defined to create new variables based on existing ones. This function supports various functional forms (linear, exponential, power, etc.) and can produce binary outcomes based on specified cut-off criteria.
 ```{r}
-generate_new_variable <- function(data, existing_vars, coefficients, noise_sd, functional_form, binary = FALSE, cut_off = NULL) {
+generate_new_variable <- function(data, existing_vars, coefficients, noise_sd, functional_form, binary = FALSE, cut_off = NULL, non_linear = FALSE) {
   
   # Ensure existing_vars and coefficients are of the same length
   if(length(existing_vars) != length(coefficients)) {
@@ -237,21 +394,40 @@ generate_new_variable <- function(data, existing_vars, coefficients, noise_sd, f
   set.seed(123)  # Ensure reproducibility
   noise <- rnorm(nrow(data), mean = 0, sd = noise_sd)
   
-  # Define the functional forms
-  if (functional_form == "linear") {
-    new_var <- linear_combination + noise
-  } else if (functional_form == "exp_linear") {
-    new_var <- exp(linear_combination + noise)
-  } else if (functional_form == "power") {
-    new_var <- rowSums(vars^coefficients) + noise
-  } else if (functional_form == "exp_power") {
-    new_var <- exp(rowSums(vars^coefficients) + noise)
-  } else if (functional_form == "sigmoid") {
-    new_var <- 1 / (1 + exp(-(linear_combination + noise)))
-  } else if (functional_form == "log") {
-    new_var <- rowSums(coefficients * log(abs(vars) + 1)) + noise  # +1 to avoid log(0)
+  # Apply non-linear transformations if non_linear is TRUE
+  if (non_linear) {
+    if (functional_form == "linear") {
+      new_var <- linear_combination^2 + noise  # Example: squaring the linear combination
+    } else if (functional_form == "exp_linear") {
+      new_var <- exp(linear_combination^2 + noise)
+    } else if (functional_form == "power") {
+      new_var <- (rowSums(vars^coefficients))^2 + noise
+    } else if (functional_form == "exp_power") {
+      new_var <- exp((rowSums(vars^coefficients))^2 + noise)
+    } else if (functional_form == "sigmoid") {
+      new_var <- 1 / (1 + exp(-linear_combination^2 - noise))
+    } else if (functional_form == "log") {
+      new_var <- rowSums(coefficients * log(abs(vars)^2 + 1)) + noise
+    } else {
+      stop("Invalid functional form selected.")
+    }
   } else {
-    stop("Invalid functional form selected.")
+    # Keep the standard functional forms if non_linear is FALSE
+    if (functional_form == "linear") {
+      new_var <- linear_combination + noise
+    } else if (functional_form == "exp_linear") {
+      new_var <- exp(linear_combination + noise)
+    } else if (functional_form == "power") {
+      new_var <- rowSums(vars^coefficients) + noise
+    } else if (functional_form == "exp_power") {
+      new_var <- exp(rowSums(vars^coefficients) + noise)
+    } else if (functional_form == "sigmoid") {
+      new_var <- 1 / (1 + exp(-(linear_combination + noise)))
+    } else if (functional_form == "log") {
+      new_var <- rowSums(coefficients * log(abs(vars) + 1)) + noise  # +1 to avoid log(0)
+    } else {
+      stop("Invalid functional form selected.")
+    }
   }
   
   # Convert to binary if specified
@@ -270,6 +446,7 @@ generate_new_variable <- function(data, existing_vars, coefficients, noise_sd, f
   return(new_var)
 }
 
+
 # Example:
 # new_var <- generate_new_variable(data = simulated_data, 
 #                                  existing_vars = c("income", "education"),
@@ -277,11 +454,13 @@ generate_new_variable <- function(data, existing_vars, coefficients, noise_sd, f
 #                                  noise_sd = 10, 
 #                                  functional_form = "linear", 
 #                                  binary = TRUE, 
-#                                  cut_off = "mean")
+#                                  cut_off = "mean",
+#                                  non_linear = non_linear)
 
 ```
 
-# initialise new variables
+# Initialise new variables
+New variables are generated using the custom function defined earlier. Each new variable is added to the dataset, and its relationship with existing variables is analyzed using GLMs.
 ```{r}
 # 1st new variable
 new_var <- generate_new_variable(data = simulated_data, 
@@ -290,7 +469,8 @@ new_var <- generate_new_variable(data = simulated_data,
                                   noise_sd = 10, 
                                   functional_form = "linear", 
                                   binary = TRUE, 
-                                  cut_off = "mean")
+                                  cut_off = "mean",
+                                  non_linear = non_linear)
 
 simulated_data$new_var <- new_var
 
@@ -304,7 +484,8 @@ new_var2 <- generate_new_variable(data = simulated_data,
                                   noise_sd = 3, 
                                   functional_form = "log", 
                                   binary = FALSE, 
-                                  cut_off = NULL)
+                                  cut_off = NULL,
+                                  non_linear = non_linear)
 
 simulated_data$new_var2 <- new_var2
 
@@ -318,7 +499,8 @@ new_var3 <- generate_new_variable(data = simulated_data,
                                   noise_sd = 4, 
                                   functional_form = "sigmoid", 
                                   binary = TRUE, 
-                                  cut_off = "median")
+                                  cut_off = "median",
+                                  non_linear = non_linear)
 
 simulated_data$new_var3 <- new_var3
 
@@ -327,12 +509,13 @@ summary(var_glm)
 
 # 4th variable
 new_var4 <- generate_new_variable(data = simulated_data, 
-                                  existing_vars = c("house_ownership", "income", "new_var3"),
-                                  coefficients = c(2.2, 0.07, 3), 
+                                  existing_vars = c("house_ownership","income", "new_var3"),
+                                  coefficients = c(-6.2, -0.0004, -13), 
                                   noise_sd = 6, 
                                   functional_form = "linear", 
                                   binary = FALSE, 
-                                  cut_off = NULL)
+                                  cut_off = NULL,
+                                  non_linear = non_linear)
 
 simulated_data$new_var4 <- new_var4
 
@@ -342,14 +525,15 @@ summary(var_glm)
 head(simulated_data)
 ```
 
-# generate crime variable
+# Generate crime variable
+A crime variable is simulated based on a combination of the previously generated variables. A logistic function (sigmoid) is applied to calculate the probability of crime, and a binary crime variable is generated based on a specified threshold.
 ```{r}
 # Sigmoid function
 sigmoid <- function(x){
   1 / (1 + exp(-x))
 }
 
-# calculate linear combinations
+# Linear Combination
 linear_combination <- -0.2 * as.numeric(simulated_data$education) +
                       -0.00003 * simulated_data$income +
                       -1.7 * simulated_data$house_ownership +
@@ -358,32 +542,49 @@ linear_combination <- -0.2 * as.numeric(simulated_data$education) +
                       0.065 * simulated_data$new_var3 +
                       0.0009 * simulated_data$new_var4
 
-summary(linear_combination)
+# Adjustments for non-linear decision boundary
+if(non_linear == TRUE){
+  # Optional Non-Linear Terms
+  non_linear_component <- -0.05 * (simulated_data$income)^2 + 
+                          0.02 * (simulated_data$new_var * simulated_data$new_var2) + 
+                          -0.03 * (simulated_data$income * as.numeric(simulated_data$education))
+  
+  # Combine linear and non-linear components
+  combined_effect <- linear_combination + non_linear_component
+} else {
+  combined_effect <- linear_combination
+}
 
-# apply sigmoid function
-crime_prob <- sigmoid(linear_combination)
+# Normalize the combined effect and convert back to vector
+combined_effect <- as.vector(scale(combined_effect, center = TRUE, scale = TRUE)) # Ensure it's a vector
 
-# Add noise
-noise <- rnorm(length(crime_prob), mean = 0, sd = 0.05)
+# Calculate crime probability using sigmoid function
+crime_prob <- sigmoid(combined_effect)
+
+# Introduce noise
+noise <- rnorm(length(crime_prob), mean = 0, sd = noise_crime)
 crime_prob <- pmin(pmax(crime_prob + noise, 0), 1)
 
-summary(crime_prob)
+# Dynamic Threshold Adjustment
+# Adjust threshold based on desired scarcity in set-up at beginning of the R markdown (e.g., target 10% crime rate)
+scarcity_threshold <- quantile(crime_prob, 1 - target_crime_rate, na.rm = TRUE)
 
-# generate binary crime variable based on a threshold
-threshold <- 0.6
-simulated_data$crime <- ifelse(crime_prob > threshold, 1, 0)
+# Generate binary crime variable based on adjusted threshold
+simulated_data$crime <- ifelse(crime_prob > scarcity_threshold, 1, 0)
 
 # Summarize the new crime variable
 summary(simulated_data$crime)
 table(simulated_data$crime)
 ```
 # Creating missing values
+This section introduces missing values into the dataset using different mechanisms:
 
-- Case 1: Completely Random Missing Values                        (random)
-- Case 2: Missing Values Based on a Distribution                  (distribution)
-- Case 3: Missing Values Dependent on Other Variables             (dependent)
-- Case 4: Missing Values Dependent on Sensitive Characteristics   (sensitive)
+- Completely Random Missing Values: Introduces missing values at random.
+- Distribution-Based Missing Values: Missingness is based on the distribution of a specific variable.
+- Dependent Missing Values: Missingness is influenced by other variables in the dataset.
+- Sensitive-Dependent Missing Values: Missingness is influenced by sensitive attributes like gender and ethnicity.
 
+These scenarios help in simulating real-world data conditions where missingness is not purely random.
 ```{r}
 create_missing_values <- function(data, var_names, proportion = NULL, num_missing = NULL, 
                                   type = c("random", "distribution", "dependent", "sensitive"),
@@ -473,27 +674,29 @@ create_missing_values <- function(data, var_names, proportion = NULL, num_missin
   return(data)
 }
 
-# Example Usage:
 
-# Adding random missing values
-simulated_data <- create_missing_values(simulated_data, var_names = c("income", "education"), 
-                                        proportion = 0.1, type = "random")
+if(missing_data == TRUE){
+  # Adding random missing values
+  simulated_data <- create_missing_values(simulated_data, var_names = c("income", "education"), 
+                                        proportion = 0.02, type = "random")
 
-# Adding distribution-based missing values
-simulated_data <- create_missing_values(simulated_data, var_names = "income", 
-                                        num_missing = 500, type = "distribution")
+  # Adding distribution-based missing values
+  simulated_data <- create_missing_values(simulated_data, var_names = "income", 
+                                          num_missing = 100, type = "distribution")
+  
+  # Adding dependent missing values
+  simulated_data <- create_missing_values(simulated_data, var_names = "new_var4", 
+                                          num_missing = 75, type = "dependent", 
+                                          open_var = c("income", "education"))
+  
+  # Adding sensitive-dependent missing values
+  simulated_data <- create_missing_values(simulated_data, var_names = "house_ownership", 
+                                          num_missing = 75, type = "sensitive", 
+                                          sensitive_var = c("gender", "ethnicity"))
+  
+  # Overview of NA values
+  table(is.na(simulated_data$income))
+}
 
-# Adding dependent missing values
-simulated_data <- create_missing_values(simulated_data, var_names = "new_var4", 
-                                        num_missing = 300, type = "dependent", 
-                                        open_var = c("income", "education"))
-
-# Adding sensitive-dependent missing values
-simulated_data <- create_missing_values(simulated_data, var_names = "house_ownership", 
-                                        num_missing = 300, type = "sensitive", 
-                                        sensitive_var = c("gender", "ethnicity"))
-
-# Overview of NA values
-table(is.na(simulated_data))
 ```
 
