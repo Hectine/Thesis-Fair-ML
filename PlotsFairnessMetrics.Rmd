@@ -1,0 +1,255 @@
+---
+title: "Threshold Plots"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+*Important:* Run analysis of simulation first, to ensure probabilities for the model are stored in global environment 
+
+# Load library
+```{r}
+library(tidyverse)
+library(gridExtra)
+library(cowplot)
+```
+
+# Initial set-up
+```{r}
+# Set current model for labelling of the plots
+current_model <- "Logistic Regression"
+
+# Predicted probabilities
+probabilities <- probabilities_test
+
+# used data
+data_plots <- data_test
+
+# Define vulnerable group (contrasted group 1)
+gender_vulnerable <- "Female"
+disability_vulnerable <- NULL
+ethnicity_vulnerable <- "Minority"
+
+# Define privileged group (contrasted group 2)
+gender_privileged <- "Male"
+disability_privileged <- NULL
+ethnicity_privileged <- "Majority"
+```
+
+# Set-up to store values necessary for later plotting
+```{r}
+# Threshold sequence
+threshold <- seq(0.05, 0.95, 0.05)
+
+# Empty containers for fairness metrics
+# - 1. False positive rate
+bench_FPR <- c()
+vulnerable_FPR <- c()
+privileged_FPR <- c()
+
+# - 2. false negative rate
+bench_FNR <- c()
+vulnerable_FNR <- c()
+privileged_FNR <- c()
+
+# - 3. proportion of favourable outcome (0 - no crime) for demographic parity
+bench_proportion <- c()
+vulnerable_proportion <- c()
+privileged_proportion <- c()
+```
+
+# Function to calculate the three fairness measures for the defined groups 
+```{r}
+# Function to calculate fairness metrics for a group
+calculate_metrics_for_group <- function(data, probabilities, threshold, gender = NULL, disability = NULL, ethnicity = NULL) {
+  
+  # Filter data based on group characteristics
+  if (!is.null(gender)) {
+    data <- data[data$gender == gender,]
+  }
+  
+  if (!is.null(disability)) {
+    data <- data[data$disability == disability,]
+  }
+  
+  if (!is.null(ethnicity)) {
+    data <- data[data$ethnicity == ethnicity,]
+  }
+  
+  # Filter the probabilities to match the filtered data
+  probabilities <- probabilities[rownames(data_plots) %in% rownames(data)]
+  
+  FPR <- c()
+  FNR <- c()
+  proportion_favorable <- c()
+  
+  # Calculate metrics for each threshold
+  for (t in threshold) {
+    predictions <- ifelse(probabilities >= t, 1, 0)
+    
+    # Ensure that both 'data$crime' and 'predictions' have the same length
+    if (length(data$crime) == length(predictions)) {
+      cm <- table(data$crime, predictions)
+      
+      TN <- ifelse("0" %in% rownames(cm) && "0" %in% colnames(cm), cm["0", "0"], 0)
+      FP <- ifelse("0" %in% rownames(cm) && "1" %in% colnames(cm), cm["0", "1"], 0)
+      FN <- ifelse("1" %in% rownames(cm) && "0" %in% colnames(cm), cm["1", "0"], 0)
+      TP <- ifelse("1" %in% rownames(cm) && "1" %in% colnames(cm), cm["1", "1"], 0)
+      
+      # FPR = FP / (FP + TN)
+      if (TN + FP > 0) {
+        FPR <- c(FPR, FP / (FP + TN))
+      } else {
+        FPR <- c(FPR, NA)
+      }
+      
+      # FNR = FN / (FN + TP)
+      if (FN + TP > 0) {
+        FNR <- c(FNR, FN / (FN + TP))
+      } else {
+        FNR <- c(FNR, NA)
+      }
+      
+      # Proportion of favorable outcome (0 = no crime)
+      proportion_favorable <- c(proportion_favorable, sum(predictions == 0) / length(predictions))
+      
+    } else {
+      stop("The lengths of the filtered data and predictions do not match.")
+    }
+  }
+  
+  return(list(FPR = FPR, FNR = FNR, proportion_favorable = proportion_favorable))
+}
+```
+
+# Calculate metrics for defined groups and benchmark
+```{r}
+# Calculate metrics for benchmark (all data)
+benchmark_metrics <- calculate_metrics_for_group(data_plots, probabilities, threshold)
+
+# Calculate metrics for vulnerable group
+vulnerable_metrics <- calculate_metrics_for_group(data_plots, probabilities, threshold, gender_vulnerable, disability_vulnerable, ethnicity_vulnerable)
+
+# Calculate metrics for privileged group
+privileged_metrics <- calculate_metrics_for_group(data_plots, probabilities, threshold, gender_privileged, disability_privileged, ethnicity_privileged)
+
+# Store the metrics for plotting
+bench_FPR <- benchmark_metrics$FPR
+bench_FNR <- benchmark_metrics$FNR
+bench_proportion <- benchmark_metrics$proportion_favorable
+
+vulnerable_FPR <- vulnerable_metrics$FPR
+vulnerable_FNR <- vulnerable_metrics$FNR
+vulnerable_proportion <- vulnerable_metrics$proportion_favorable
+
+privileged_FPR <- privileged_metrics$FPR
+privileged_FNR <- privileged_metrics$FNR
+privileged_proportion <- privileged_metrics$proportion_favorable
+```
+
+# Plots for ratio to benchmark of FPR and FNR, next to each other
+```{r}
+# Calculate the ratios
+vulnerable_FPR_ratio <- vulnerable_FPR / bench_FPR
+privileged_FPR_ratio <- privileged_FPR / bench_FPR
+
+vulnerable_FNR_ratio <- vulnerable_FNR / bench_FNR
+privileged_FNR_ratio <- privileged_FNR / bench_FNR
+
+# Create a data frame for plotting
+plot_data <- data.frame(
+  Threshold = rep(threshold, times = 4),
+  Metric = rep(c("FPR Ratio", "FNR Ratio"), each = length(threshold) * 2),
+  Group = rep(c(paste("Vulnerable Group:", gender_vulnerable, ethnicity_vulnerable, disability_vulnerable),
+                paste("Privileged Group:", gender_privileged, ethnicity_privileged, disability_privileged)), 
+              each = length(threshold)),
+  Value = c(vulnerable_FPR_ratio, privileged_FPR_ratio, 
+            vulnerable_FNR_ratio, privileged_FNR_ratio)
+)
+
+# Plot
+ggplot(plot_data, aes(x = Threshold, y = Value, color = Group)) +
+  geom_line(size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(title = paste(current_model, "FPR and FNR Ratios to Benchmark"),
+       x = "Threshold",
+       y = "Ratio to Benchmark",
+       color = "Group") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom")
+```
+# Ratio to benchmark of FPR and FNR in one plot
+```{r}
+# Plot
+ggplot(plot_data, aes(x = Threshold, y = Value, color = Group, linetype = Metric)) +
+  geom_line(size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  labs(title = paste(current_model, "FPR and FNR Ratios to Benchmark"),
+       x = "Threshold",
+       y = "Ratio to Benchmark",
+       color = "Group",
+       linetype = "Metric") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+```
+# FNR and FPR for both groups and benchmark
+```{r}
+# Combine FPR and FNR data into a single data frame
+combined_data <- data.frame(
+  Threshold = rep(threshold, 6),
+  Metric = rep(c("FPR", "FNR"), each = length(threshold) * 3),
+  Group = rep(c(paste("Benchmark"),
+                paste("Vulnerable Group:", gender_vulnerable, ethnicity_vulnerable, disability_vulnerable),
+                paste("Privileged Group:", gender_privileged, ethnicity_privileged, disability_privileged)), 
+              times = 2, each = length(threshold)),
+  Value = c(bench_FPR, vulnerable_FPR, privileged_FPR, bench_FNR, vulnerable_FNR, privileged_FNR)
+)
+
+# Plot the combined data
+combined_plot <- ggplot(combined_data, aes(x = Threshold, y = Value, color = Group, linetype = Metric)) +
+  geom_line(size = 1) +
+  labs(title = paste(current_model, "- FPR and FNR Combined"),
+       x = "Threshold",
+       y = "Rate") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+
+# Display the final plot
+print(combined_plot)
+
+```
+
+# Demographic parity plot (proportion of favourable (crime == 0) outcome)
+```{r}
+# Combine the proportion data into a single data frame
+proportion_data <- data.frame(
+  Threshold = threshold,
+  Group = rep(c(paste("Benchmark"),
+                paste("Vulnerable Group:", gender_vulnerable, ethnicity_vulnerable, disability_vulnerable),
+                paste("Privileged Group:", gender_privileged, ethnicity_privileged, disability_privileged)), 
+              each = length(threshold)),
+  Proportion = c(bench_proportion, vulnerable_proportion, privileged_proportion)
+)
+
+# Plot the proportion of favorable outcomes
+proportion_plot <- ggplot(proportion_data, aes(x = Threshold, y = Proportion, color = Group)) +
+  geom_line(size = 1) +
+  labs(title = paste(current_model, "- Proportion of Favorable Outcomes"),
+       x = "Threshold",
+       y = "Proportion of Favorable Outcomes (No Crime)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+
+# Display the final plot
+print(proportion_plot)
+```
+

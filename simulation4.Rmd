@@ -36,13 +36,13 @@ This code block sets up parameters for adding noise to specific variables (noise
 The code also includes a parameter to control the non-linearity of the decision boundary (non_linear). Lastly, it sets up the threshold for crime scarcity based on a target crime rate (target_crime_rate), which adjusts the outcome distribution based on the desired crime rate within the dataset.
 ```{r}
 # Noise set-up
-noise_income <- 5000
-noise_house_ownership <- 0.05
-noise_crime <- 0.05
+noise_income <- 6000
+noise_house_ownership <- 0.09
+noise_crime <- 0.09
 
 # Relationship of income to sensitive attributes and education
 # linear relationship when set FALSE; else non-linearity introduced in form of interactions
-non_linear_income <- TRUE
+non_linear_income <- FALSE
 
 # missing data points set-up
 # TRUE when dataset should contain missing values
@@ -55,6 +55,9 @@ non_linear <- TRUE
 # Scarcity of crime outcome
 # Adjust threshold based on desired scarcity (e.g., target 10% crime rate)
 target_crime_rate <- 0.5
+
+# Flipping target label (crime) to introduce more noise
+swap_rate <- 0.09
 ```
 
 # Generate protected attributes
@@ -141,6 +144,7 @@ gender_effect <- ifelse(gender == "Male", 7000, -3000)
 ethnicity_effect <- ifelse(ethnicity == "Minority", -5000, 0)
 education_mitigation <- ifelse(education %in% c("Master's", "Doctorate"), 5000, 0)
 ethnicity_effect <- ethnicity_effect + education_mitigation
+ethnicity_effect <- ifelse(ethnicity_effect == 5000, 0, ethnicity_effect)
 
 # Disability effect (People with disabilities earn less)
 disability_effect <- ifelse(disability == "Yes", -7000, 0)
@@ -576,6 +580,16 @@ simulated_data$crime <- ifelse(crime_prob > scarcity_threshold, 1, 0)
 summary(simulated_data$crime)
 table(simulated_data$crime)
 ```
+# Randomly distort crime classification
+This code block randomly distorts a specified proportion of the crime classification outcomes in the dataset, effectively flipping some outcomes from 1 to 0 or from 0 to 1. This can be used to simulate noise, errors, or bias in the classification process for experimental or testing purposes.
+```{r}
+# select indices
+swap_indices <- sample(1:n, size = round(n * swap_rate, 0), replace = FALSE)
+
+# re-classify cases to opposite outcome
+simulated_data$crime[swap_indices] <- ifelse(simulated_data$crime[swap_indices] == 1, 0, 1)
+```
+
 # Creating missing values
 This section introduces missing values into the dataset using different mechanisms:
 

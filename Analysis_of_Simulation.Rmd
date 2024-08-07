@@ -9,7 +9,11 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Overview of the markdown
+The script is an R Markdown document for analyzing simulated data with a focus on evaluating fairness across different machine learning models and subpopulations. It includes steps for data preprocessing, model training, evaluation, and fairness assessment across various sensitive attributes like gender, disability, and ethnicity. The script can handle multiple machine learning algorithms, produce performance metrics, and assess fairness through confusion matrices and other statistical measures.
+
 # Load libraries
+This block loads the necessary R libraries for data manipulation (tidyverse), machine learning algorithms (randomForest, e1071, xgboost, ada), and performance metrics (pROC).
 ```{r}
 library(tidyverse)
 library(randomForest)
@@ -20,14 +24,16 @@ library(ada)
 ```
 
 # Analysis set-up
+Initializes key parameters including the choice of algorithm, whether model hyperparameters are tuned, and the classification threshold.
 ```{r}
 # Model choice
-# - logistic
+# - linear_regression
+# - logistic_regression
 # - random_forest
 # - svm
 # - xgboost
 # - adaboost
-algorithm <- "adaboost"
+algorithm <- "linear_regression"
 
 # Tuned model
 # indicates whether (hyper-)parameters of the model are optimized (when set TRUE)
@@ -39,6 +45,7 @@ threshold <- 0.5
 ```
 
 # Train/Test split
+Splits the data into training (80%) and testing (20%) sets to allow model training and performance evaluation. The split is randomized but reproducible due to the set seed.
 ```{r}
 # set data
 data <- simulated_data
@@ -58,9 +65,25 @@ data_train <- data[train_index,]
 data_test <- data[-train_index,]
 ```
 
-# Logistic regression
+# Linear regression
+Implements linear regression for predicting the probability of a crime. Linear regression models the relationship between the dependent variable (crime) and the independent variables (features) by fitting a linear equation to observed data.
 ```{r}
-if(algorithm == "logistic"){
+if(algorithm == "linear_regression"){
+  # apply default linear regression
+  model <- glm(crime ~ ., data = data_train[,4:11])
+  
+  # obtain predicted probabilities for the training data
+  probabilities_train <- predict(model, newdata = data_train, type = "response")
+  
+  # obtain predicted probabilities for the test data
+  probabilities_test <- predict(model, newdata = data_test, type = "response") 
+}
+```
+
+# Logistic regression
+Implements logistic regression to predict binary outcomes (crime or no crime). Logistic regression uses a logistic function to model the probability that a given input belongs to a certain class.
+```{r}
+if(algorithm == "logistic_regression"){
   
   # apply default logistic regression
   model <- glm(crime ~ ., data = data_train[,4:11], family = "binomial")
@@ -74,6 +97,7 @@ if(algorithm == "logistic"){
 ```
 
 # Random Forest
+Implements a random forest model, an ensemble learning method that builds multiple decision trees and merges them together to get a more accurate and stable prediction. It works by averaging the predictions from each tree.
 ```{r}
 if(algorithm == "random_forest"){
   
@@ -89,6 +113,7 @@ if(algorithm == "random_forest"){
 ```
 
 # Support vector machnine
+Implements an SVM model, which classifies data by finding the hyperplane that best separates data into classes. The SVM uses a kernel function (like radial basis) to handle non-linear data. The script extracts the predicted probabilities of belonging to each class.
 ```{r}
 if (algorithm == "svm") {
 
@@ -104,12 +129,13 @@ if (algorithm == "svm") {
 ```
 
 # XGboost
+Implements XGBoost, a gradient boosting algorithm that builds an ensemble of decision trees iteratively, optimizing the model based on the errors of previous models. It’s known for high performance in predictive tasks.
 ```{r}
 if (algorithm == "xgboost") {
 
   # Convert data to numeric matrix, converting factors/characters to numeric
-  train_matrix <- data.matrix(data_train[, 4:11])
-  test_matrix <- data.matrix(data_test[, 4:11])
+  train_matrix <- data.matrix(data_train[, 4:10])
+  test_matrix <- data.matrix(data_test[, 4:10])
   
   # Convert target variable to numeric and ensure it is binary (0 and 1)
   train_label <- as.numeric(as.factor(data_train$crime)) - 1 # Assumes 'crime' is a factor or character
@@ -142,6 +168,7 @@ if (algorithm == "xgboost") {
 ```
 
 # Adaboost
+Implements AdaBoost, a boosting algorithm that combines multiple weak learners (usually decision stumps) to create a strong classifier. It assigns more weight to incorrectly classified instances to focus learning on difficult cases.
 ```{r}
 if (algorithm == "adaboost") {
   
@@ -155,8 +182,8 @@ if (algorithm == "adaboost") {
   }
   
   # Prepare the training and test data
-  train_data <- data_train[, 4:11]
-  test_data <- data_test[, 4:11]
+  train_data <- data_train[, 4:10]
+  test_data <- data_test[, 4:10]
   
   # Fit the AdaBoost model
   model <- ada(x = train_data, y = train_label, iter = 50, nu = 0.1, type = "real")
@@ -170,6 +197,7 @@ if (algorithm == "adaboost") {
 ```
 
 # Obtain binary crime classification for test and training data
+Converts the predicted probabilities into binary classifications based on the threshold. It then creates confusion matrices to compare the predictions against actual labels.
 ```{r}
   # convert training data probabilities into binary depending on threshold
   prediction_train <- ifelse(probabilities_train >= threshold, 1, 0)
@@ -185,6 +213,7 @@ if (algorithm == "adaboost") {
 ```
 
 # Inspect model efficiency (ROC & AUC)
+Evaluates the model’s performance using metrics like ROC-AUC, which measures the trade-off between true positive and false positive rates, and accuracy, which measures the proportion of correct predictions.
 ```{r}
 # obtain ROC
 roc_curve <- roc(data_test$crime, prediction_test)
@@ -204,6 +233,7 @@ cat("### Model performance ###", "\nThe Area under the Curve is:", round(auc_val
 ```
 
 # Generation of confusion matrix for single sensitive attribute comparisons (gender, disability, ethnicity)
+Generates confusion matrices for different subpopulations based on gender, disability, and ethnicity, allowing for an assessment of how well the model performs across these groups.
 ```{r}
 # 1. Gender comparison
 # Index selection
@@ -246,6 +276,7 @@ cm_test_majority <- table(data_test[indices_test_majority,]$crime, prediction_te
 ```
 
 # Benchmark metric
+Computes benchmark fairness metrics, including demographic parity (proportion of favorable outcomes), false positive rate (FPR), and false negative rate (FNR) for both training and test data.
 ```{r}
 # Calculate Benchmark metrics for training data
 proportion_favorable_benchmark_train <- sum(cm_train[,1]) / sum(cm_train)
@@ -443,6 +474,8 @@ extremes_train <- find_extremes(subpop_metrics_train)
 extremes_test <- find_extremes(subpop_metrics_test)
 
 # Display the most privileged and disadvantaged subpopulations
+cat("### RANKING OF SUBPOPULATIONS###")
+
 cat("\n### Most Privileged Subpopulations (Training Data) ###\n")
 cat("1. Lowest FPR:", extremes_train$most_privileged$FPR, "\n")
 cat("2. Highest FNR (most desirable):", extremes_train$most_privileged$FNR, "\n")
