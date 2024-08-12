@@ -12,6 +12,23 @@ knitr::opts_chunk$set(echo = TRUE)
 # Overview of the markdown
 The script is an R Markdown document for analyzing simulated data with a focus on evaluating fairness across different machine learning models and subpopulations. It includes steps for data preprocessing, model training, evaluation, and fairness assessment across various sensitive attributes like gender, disability, and ethnicity. The script can handle multiple machine learning algorithms, produce performance metrics, and assess fairness through confusion matrices and other statistical measures.
 
+# Load dataset
+```{r}
+# set data
+data <- simulated_data
+
+# set necessary variables to factors
+data[,2] <- as.factor(data[,2])
+data[,3] <- as.factor(data[,3])
+data[,6] <- as.factor(data[,6])
+data[,7] <- as.factor(data[,7])
+data[,9] <- as.factor(data[,9])
+data[,11] <- as.factor(data[,11])
+
+# set necessary variables to numeric
+data[,10] <- as.numeric(data[,10])
+```
+
 # Load libraries
 This block loads the necessary R libraries for data manipulation (tidyverse), machine learning algorithms (randomForest, e1071, xgboost, ada), and performance metrics (pROC).
 ```{r}
@@ -21,35 +38,192 @@ library(pROC)
 library(e1071)
 library(xgboost)
 library(ada)
+library(mice)
+library(missForest)
+library(smotefamily)
+library(ROSE)
 ```
 
 # Analysis set-up
 Initializes key parameters including the choice of algorithm, whether model hyperparameters are tuned, and the classification threshold.
 ```{r}
-# Model choice
-# - linear_regression
-# - logistic_regression
-# - random_forest
-# - svm
-# - xgboost
-# - adaboost
-algorithm <- "linear_regression"
+# 1. Model choice
+# Select the algorithm for the analysis. Options include:
+# - "linear_regression"
+# - "logistic_regression"
+# - "random_forest"
+# - "svm"
+# - "xgboost"
+# - "adaboost"
+algorithm <- "logistic_regression"
 
-# Tuned model
-# indicates whether (hyper-)parameters of the model are optimized (when set TRUE)
+# Ensure the chosen algorithm is valid
+valid_algorithms <- c("linear_regression", "logistic_regression", "random_forest", "svm", "xgboost", "adaboost")
+if (!algorithm %in% valid_algorithms) {
+  stop("Invalid algorithm chosen. Please select from the valid options: ", paste(valid_algorithms, collapse = ", "))
+}
+
+# 2. Tuned model
+# Indicates whether the model's hyperparameters will be optimized.
+# If set to TRUE, hyperparameter tuning methods will be applied.
 tuned <- FALSE
 
-# Threshold setting
-# sets decision boundary on when a case is classified as criminal or not
+# 3. Threshold setting
+# Sets the decision boundary for classification.
+# This is relevant for binary classification models.
 threshold <- 0.5
+
+# Validate that threshold is between 0 and 1
+if (threshold < 0 || threshold > 1) {
+  stop("Threshold must be between 0 and 1.")
+}
+
+# 4.1 Missing data handling
+# Indicates whether the dataset contains missing data that needs to be addressed.
+missing_data <- FALSE
+
+# 4.2 Imputation method for missing data
+# Choose an imputation method to handle missing values in the dataset. Options include:
+# - "simple_value_imputation": Imputes using mean for numeric and mode for categorical variables.
+# - "MICE_method": Multivariate Imputation by Chained Equations.
+# - "Miss_Forest_Imputation": Imputation using Random Forests.
+NA_method <- "simple_value_imputation"
+
+# Ensure the chosen imputation method is valid
+valid_imputation_methods <- c("simple_value_imputation", "MICE_method", "Miss_Forest_Imputation")
+if (!NA_method %in% valid_imputation_methods) {
+  stop("Invalid imputation method chosen. Please select from the valid options: ", paste(valid_imputation_methods, collapse = ", "))
+}
+
+# 5.1 Handling scarce outcome
+# Indicate whether crime outcome is scarcely distributed in the dataset
+scarce_outcome <- TRUE
+
+# 5.2 Chose method to handle scarce outcome
+# - "no_method"
+# - "SMOTE_method"
+# - "random_oversampling"
+# - "random_undersampling"
+scarce_outcome_method <- "random_undersampling"
+
+# Print out the setup parameters to confirm choices
+cat("Setup Parameters:\n")
+cat("Algorithm:", algorithm, "\n")
+cat("Tuned Model:", tuned, "\n")
+cat("Threshold:", threshold, "\n")
+cat("Missing Data:", missing_data, "\n")
+cat("Imputation Method:", NA_method, "\n")
+cat("Scarce outcome:", scarce_outcome)
+```
+
+# Missing data imputation
+This code block is designed to handle missing data within a dataset by employing different imputation methods based on the user's selection. It dynamically identifies binary and numeric variables and then applies the appropriate imputation technique to each variable type. The three imputation methods included are simple value imputation, MICE (Multivariate Imputation by Chained Equations), and missForest. The code is adaptable to different datasets, as it identifies variable types automatically and handles missing data accordingly.
+```{r}
+# Identification of binary and numeric variables in the dataset
+# Binary columns are those that are either factors or logicals
+binary_columns <- which(sapply(data, function(x) is.factor(x) | is.logical(x)))
+# Numeric columns are those identified as numeric data types
+numeric_columns <- which(sapply(data, is.numeric))
+
+if(missing_data == TRUE) {
+  
+  # 1. Simple Value Imputation
+  if(NA_method == "simple_value_imputation") {
+    # Imputation for binary columns
+    for (col in binary_columns) {
+      # Calculate the mode (most frequent value) for each binary column, ignoring NA values
+      mode_value <- names(which.max(table(data[, col], useNA = "no")))
+      # Replace missing values with the calculated mode
+      data[, col][is.na(data[, col])] <- mode_value
+    }
+  
+    # Imputation for numeric columns
+    for (col in numeric_columns) {
+      # Replace missing values with the mean of the column, ignoring NA values
+      data[, col] <- replace(data[, col], is.na(data[, col]), mean(data[, col], na.rm = TRUE))
+    }
+  }
+  
+  # 2. MICE (Multivariate Imputation by Chained Equations) Method
+  if(NA_method == "MICE_method") {
+    # Iterate over columns from the 4th to the last column of the dataset
+    for (col in 4:ncol(data)) {
+      # Perform imputation using the MICE method with 'cart' (Classification and Regression Trees)
+      # The 'm = 1' argument specifies that only one imputation dataset should be created
+      data[, col] <- complete(mice(data, method = "cart", m = 1))[, col]
+    }
+  }
+  
+  # 3. Miss Forest Imputation Method
+  if(NA_method == "Miss_Forest_Imputation") {
+    # Perform missForest imputation on the entire dataset
+    # missForest handles both continuous and categorical variables
+    # The imputed dataset is returned and assigned back to the original data variable
+    data <- missForest(data)$ximp
+  }
+}
+```
+
+# Old data imputation code
+```{#r}
+if(missing_data == TRUE) {
+  
+  if(NA_method == "mean_simple_value_imputation") {
+    # replace missing education level with majority education level
+    data[,4] <- replace(data[,4], is.na(data[,4]), names(which.max(table(data[,4]))))
+    
+    # replace with mean value
+    data[,5] <- replace(data[,5], is.na(data[,5]), mean(data[,5], na.rm = TRUE))
+    data[,8] <- replace(data[,8], is.na(data[,8]), mean(data[,8], na.rm = TRUE))
+    data[,10] <- replace(data[,10], is.na(data[,10]), mean(data[,10], na.rm = TRUE))
+    
+    # replace with majority category
+    data[,6][is.na(data[,6])] <- as.numeric(names(which.max(table(data[,6]))[1]))
+    data[,7][is.na(data[,7])] <- as.numeric(names(which.max(table(data[,7]))[1]))
+    data[,9][is.na(data[,9])] <- as.numeric(names(which.max(table(data[,9]))[1]))
+    data[,11][is.na(data[,11])] <- as.numeric(names(which.max(table(data[,11]))[1]))
+  }
+  
+  if(NA_method == "MICE_method") {
+    # perform initial inspection of missing values
+    md.pattern(data)
+    
+    # impute missing education levels
+    data[,4] <- complete(mice(data[,1:4], method = "cart"))[,4]
+    
+    # impute missing values in other variables
+    data[,5] <- complete(mice(data[,c(1:3, 5)], method = "cart"))[,4]
+    data[,6] <- complete(mice(data[,c(1:3, 6)], method = "cart"))[,4]
+    data[,7] <- as.numeric(data[,7])
+    data[,7] <- complete(mice(data[,c(1:3, 7)], method = "cart"))[,4]
+    data[,8] <- complete(mice(data[,c(1:3, 8)], method = "cart"))[,4]
+    data[,9] <- as.factor(data[,9])
+    data[,9] <- complete(mice(data[,c(1:3, 9)], method = "cart"))[,4]
+    data[,10] <- as.numeric(data[,10])
+    data[,10] <- complete(mice(data[,c(1:3, 10)], method = "cart"))[,4]
+    data[,11] <- complete(mice(data[,c(1:3, 11)], method = "cart"))[,4]
+  }
+  
+  if(NA_method == "Miss_Forest_Imputation") {
+    # Perform missForest imputation on the entire dataset
+    imputed_data <- missForest(data)$ximp
+    
+    # Extract the imputed columns
+    data[,4] <- imputed_data[,4]
+    data[,5] <- imputed_data[,5]
+    data[,6] <- imputed_data[,6]
+    data[,7] <- imputed_data[,7]
+    data[,8] <- imputed_data[,8]
+    data[,9] <- imputed_data[,9]
+    data[,10] <- imputed_data[,10]
+    data[,11] <- imputed_data[,11]
+  }
+}
 ```
 
 # Train/Test split
 Splits the data into training (80%) and testing (20%) sets to allow model training and performance evaluation. The split is randomized but reproducible due to the set seed.
 ```{r}
-# set data
-data <- simulated_data
-
 # set seed
 set.seed(123)
 
@@ -63,6 +237,120 @@ train_index <- sample(1:n, size = n_train)
 # obtain train and test set
 data_train <- data[train_index,]
 data_test <- data[-train_index,]
+```
+
+# Scarce outcome intervention
+This R code block is designed to address the issue of class imbalance in a dataset, specifically targeting the situation where one class (e.g., a crime outcome) is underrepresented (scarce outcome). It offers three different methods to handle the imbalance: random oversampling, SMOTE (Synthetic Minority Over-sampling Technique), and random undersampling. The code adjusts the training dataset accordingly based on the selected method.
+
+1. Random over-sampling
+    This method duplicates instances of the minority class until its size matches the         majority class, effectively balancing the dataset.
+    
+2. SMOTE (Synthetic Minority Over-sampling Technique)
+    SMOTE generates synthetic instances of the minority class by interpolating between existing instances, thus increasing its representation in the dataset.
+    
+3. Random under-sampling
+    This method reduces the size of the majority class by randomly selecting instances to match the minority class, creating a balanced dataset with fewer instances.
+```{r}
+if (scarce_outcome == TRUE) {
+  
+  # 1. Random oversampling of the minority class
+  if (scarce_outcome_method == "random_oversampling") {
+    
+    # Calculate the new sample size for oversampling
+    new_N <- table(data_train$crime)[1] * 2
+    
+    # Perform oversampling on the minority class to match the majority class size
+    data_train = ovun.sample(crime ~ . , data = data_train, method = "over", N = new_N)$data
+  }
+  
+  # 2. Oversampling the minority class using SMOTE
+  if (scarce_outcome_method == "SMOTE_method") {
+
+    # Identify non-numeric columns in the training data
+    non_numeric_cols <- sapply(data_train, class) %in% c("factor", "character")
+
+    # Convert non-numeric columns to one-hot encoded numeric columns
+    if (any(non_numeric_cols)) {
+      data_train_numeric <- model.matrix(~ . -1, data = data_train)
+      data_train_numeric <- data.frame(data_train_numeric)
+
+      # Ensure the target variable 'crime' is preserved and correct
+      data_train_numeric$crime <- data_train$crime
+    } else {
+      data_train_numeric <- data_train
+    }
+
+    # Apply the SMOTE algorithm to generate synthetic samples for the minority class
+    data_train_smote <- SMOTE(X = data_train_numeric[, -which(names(data_train_numeric) == "crime")],
+                              target = data_train_numeric$crime,
+                              K = 5,
+                              dup_size = 0) 
+
+    # Convert the SMOTE output back to a data frame
+    data_train_smote <- data.frame(data_train_smote$data)
+    data_train_smote$crime <- as.factor(ifelse(data_train_smote$crime == 1, 1, 0))
+
+    # Revert the one-hot encoded variables back to their original categorical format
+    data_train_smote$gender <- factor(ifelse(data_train_smote$genderFemale == 1, "Female", "Male"))
+    data_train_smote$ethnicity <- factor(ifelse(data_train_smote$ethnicityMinority == 1, "Minority", "Non-Minority"))
+    data_train_smote$disability <- factor(ifelse(data_train_smote$disabilityYes == 1, "Yes", "No"))
+
+    # Handle missing values in the education variable and recombine levels
+    education_levels <- c("No High School", "High School", "Some College", "Bachelor's", "Master's", "Doctorate")
+
+    data_train_smote$education <- apply(data_train_smote[, c("educationHigh.School", "educationSome.College", 
+                                                             "educationBachelor.s", "educationMaster.s", "educationDoctorate")], 1, 
+                                        function(x) {
+                                          if (all(x == 0)) {
+                                            return("No High School")
+                                          } else {
+                                            return(education_levels[which(x == 1) + 1])
+                                          }
+                                        })
+
+    # Convert to factor with all levels, even if some are missing in the SMOTE'd data
+    data_train_smote$education <- factor(data_train_smote$education, levels = education_levels)
+
+    # Remove the one-hot encoded columns as they are no longer needed
+    data_train_smote <- data_train_smote[, !(names(data_train_smote) %in% 
+                                             c("genderFemale", "genderMale", "ethnicityMinority", "disabilityYes", 
+                                               "educationHigh.School", "educationSome.College", 
+                                               "educationBachelor.s", "educationMaster.s", "educationDoctorate"))]
+
+    # Fix column names to match the expected output format
+    colnames(data_train_smote) <- gsub("new_var1", "new_var", colnames(data_train_smote))
+    colnames(data_train_smote) <- gsub("new_var31", "new_var3", colnames(data_train_smote))
+    colnames(data_train_smote)[colnames(data_train_smote) == "house_ownership1"] <- "house_ownership"
+    colnames(data_train_smote)[colnames(data_train_smote) == "crime1"] <- "crime"
+
+    # Remove any duplicate 'crime' columns that may have been created during processing
+    data_train_smote <- data_train_smote[, !duplicated(names(data_train_smote))]
+
+    # Reorder columns to match the original dataset's column order
+    original_order <- c("gender", "ethnicity", "disability", "education", "income", "house_ownership", 
+                        "new_var", "new_var2", "new_var3", "new_var4", "crime")
+    data_train_smote <- data_train_smote[, original_order]
+    
+    # Ensure the data types match between training and testing datasets
+    data_train_smote$crime <- factor(data_train_smote$crime, levels = c(0, 1))
+    data_train_smote$house_ownership <- factor(data_train_smote$house_ownership, levels = c(0, 1))
+    data_train_smote$new_var <- factor(data_train_smote$new_var, levels = c(0, 1))
+    data_train_smote$new_var3 <- factor(data_train_smote$new_var3, levels = c(0, 1))
+
+    # Update the training data with the SMOTE-processed data
+    data_train <- data_train_smote
+  }
+  
+  # 3. Random undersampling of the majority class
+  if (scarce_outcome_method == "random_undersampling") {
+    
+    # Calculate the new sample size for undersampling
+    new_N <- table(data_train$crime)[2] * 2
+    
+    # Perform undersampling on the majority class to match the minority class size
+    data_train = ovun.sample(crime ~ . , data = data_train, method = "under", N = new_N)$data
+  }
+}
 ```
 
 # Linear regression
@@ -298,6 +586,7 @@ cat("### Benchmark fairness measures ###\n\n1.Training Data\n- Demographic Parit
 ```
 
 # Function to calculate fairness metrics 
+This R function, calculate_metrics, is designed to compute fairness metrics from a confusion matrix. It calculates key fairness metrics such as the proportion of favorable outcomes (Demographic Parity), False Positive Rate (FPR), and False Negative Rate (FNR) for a given model. The function also compares these metrics against a benchmark confusion matrix to provide ratios that indicate how the model's performance compares to the benchmark in terms of fairness.
 ```{r}
 # Function to calculate fairness metrics for a given confusion matrix
 calculate_metrics <- function(cm, cm_benchmark) {
@@ -339,6 +628,11 @@ calculate_metrics <- function(cm, cm_benchmark) {
 ```
 
 # Calculation and display of the three fairness metrics for single senstive attribute comparisons
+This code block performs a detailed comparison of fairness metrics across different sensitive attributes (such as gender, disability status, and ethnicity) by calculating and displaying key metrics like Proportion of Favorable Outcome (Demographic Parity), False Positive Rate (FPR), and False Negative Rate (FNR). These metrics are calculated separately for both training and testing datasets, and results are compared against a benchmark to assess fairness.
+
+1. Comparative Fairness Analysis: The code performs a detailed comparative analysis of fairness across different sensitive groups, making it possible to identify biases in model predictions.
+
+2. Benchmarking: By comparing subgroup metrics against overall benchmarks, the code provides context for understanding disparities in model performance.
 ```{r}
 # Function to display the results in a structured format
 display_results <- function(subpop, metrics_train, metrics_test) {
@@ -400,6 +694,7 @@ display_results("Majority", metrics_train_majority, metrics_test_majority)
 ```
 
 # Function to find most advantages and disadvantaged subpopulations 
+This code block defines a function find_extremes that identifies the most privileged and most disadvantaged subpopulations based on three fairness metrics: False Positive Rate (FPR), False Negative Rate (FNR), and Proportion of Favorable Outcome (Demographic Parity). The function takes in a list of calculated metrics for various subpopulations and returns the subpopulation names that exhibit the most extreme values—either advantageous or disadvantageous—across these metrics.
 ```{r}
 # Function to find the most privileged and most disadvantaged subpopulations
 find_extremes <- function(metrics_list) {
@@ -432,6 +727,15 @@ find_extremes <- function(metrics_list) {
 ```
 
 # Assessment of fairness metrics on fine-grained subpopulations
+This code block performs an assessment of fairness metrics across fine-grained subpopulations defined by combinations of gender, ethnicity, and disability status. It evaluates the model's performance on these subpopulations, identifying which groups are the most advantaged and disadvantaged based on various fairness metrics. The process involves calculating and displaying the metrics for each subpopulation, and then ranking them to determine which subpopulations are the most privileged and the most disadvantaged.
+
+1. Fine-Grained Fairness Analysis: By breaking down the dataset into small subpopulations based on multiple sensitive attributes, the code allows for a nuanced analysis of fairness.
+
+2. Benchmarking and Comparison: The use of overall confusion matrices as benchmarks enables the assessment of relative fairness across different groups.
+
+3. Identification of Extremes: The code helps identify the extremes in model performance, making it easier to target interventions or adjustments to improve fairness.
+
+4. Comprehensive Coverage: The approach covers all possible combinations of gender, ethnicity, and disability, ensuring no group is overlooked in the fairness assessment.
 ```{r}
 # Calculate benchmark metrics
 cm_train <- table(data_train$crime, prediction_train)

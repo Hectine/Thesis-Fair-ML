@@ -54,7 +54,7 @@ non_linear <- TRUE
 
 # Scarcity of crime outcome
 # Adjust threshold based on desired scarcity (e.g., target 10% crime rate)
-target_crime_rate <- 0.5
+target_crime_rate <- 0.1
 
 # Flipping target label (crime) to introduce more noise
 swap_rate <- 0.09
