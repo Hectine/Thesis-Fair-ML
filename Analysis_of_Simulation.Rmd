@@ -12,7 +12,9 @@ knitr::opts_chunk$set(echo = TRUE)
 # Overview of the markdown
 The script is an R Markdown document for analyzing simulated data with a focus on evaluating fairness across different machine learning models and subpopulations. It includes steps for data preprocessing, model training, evaluation, and fairness assessment across various sensitive attributes like gender, disability, and ethnicity. The script can handle multiple machine learning algorithms, produce performance metrics, and assess fairness through confusion matrices and other statistical measures.
 
-# Load dataset
+# Initial set-up
+
+## Load dataset
 ```{r}
 # set data
 data <- simulated_data
@@ -29,22 +31,41 @@ data[,11] <- as.factor(data[,11])
 data[,10] <- as.numeric(data[,10])
 ```
 
-# Load libraries
+## Load libraries
 This block loads the necessary R libraries for data manipulation (tidyverse), machine learning algorithms (randomForest, e1071, xgboost, ada), and performance metrics (pROC).
 ```{r}
-library(tidyverse)
-library(randomForest)
-library(pROC)
-library(e1071)
-library(xgboost)
+# Library for implementing the AdaBoost algorithm, a boosting technique that combines weak learners to form a strong classifier
 library(ada)
+
+# Library for SVM (Support Vector Machine) implementations, useful for classification tasks
+library(e1071)
+
+# Library for handling missing data using multiple imputation techniques
 library(mice)
+
+# Library for imputing missing data using random forests
 library(missForest)
-library(smotefamily)
+
+# Library for ROC (Receiver Operating Characteristic) analysis and AUC (Area Under the Curve) calculations, often used for evaluating model performance
+library(pROC)
+
+# Library for oversampling and undersampling techniques, including ROSE (Random Over Sampling Examples), to handle imbalanced datasets
 library(ROSE)
+
+# Library for building random forests, an ensemble learning method for classification and regression
+library(randomForest)
+
+# Library for implementing SMOTE (Synthetic Minority Over-sampling Technique) and other methods to handle imbalanced data
+library(smotefamily)
+
+# Library for data manipulation, visualization, and analysis, providing a cohesive set of functions for working with data in R
+library(tidyverse)
+
+# Library for implementing XGBoost, a scalable and efficient gradient boosting algorithm for classification and regression tasks
+library(xgboost)
 ```
 
-# Analysis set-up
+## Analysis set-up
 Initializes key parameters including the choice of algorithm, whether model hyperparameters are tuned, and the classification threshold.
 ```{r}
 # 1. Model choice
@@ -55,7 +76,7 @@ Initializes key parameters including the choice of algorithm, whether model hype
 # - "svm"
 # - "xgboost"
 # - "adaboost"
-algorithm <- "logistic_regression"
+algorithm <- "linear_regression"
 
 # Ensure the chosen algorithm is valid
 valid_algorithms <- c("linear_regression", "logistic_regression", "random_forest", "svm", "xgboost", "adaboost")
@@ -66,7 +87,7 @@ if (!algorithm %in% valid_algorithms) {
 # 2. Tuned model
 # Indicates whether the model's hyperparameters will be optimized.
 # If set to TRUE, hyperparameter tuning methods will be applied.
-tuned <- FALSE
+tuned <- TRUE
 
 # 3. Threshold setting
 # Sets the decision boundary for classification.
@@ -97,7 +118,7 @@ if (!NA_method %in% valid_imputation_methods) {
 
 # 5.1 Handling scarce outcome
 # Indicate whether crime outcome is scarcely distributed in the dataset
-scarce_outcome <- TRUE
+scarce_outcome <- FALSE
 
 # 5.2 Chose method to handle scarce outcome
 # - "no_method"
@@ -116,7 +137,9 @@ cat("Imputation Method:", NA_method, "\n")
 cat("Scarce outcome:", scarce_outcome)
 ```
 
-# Missing data imputation
+# Adjustments to data
+
+## Missing data imputation
 This code block is designed to handle missing data within a dataset by employing different imputation methods based on the user's selection. It dynamically identifies binary and numeric variables and then applies the appropriate imputation technique to each variable type. The three imputation methods included are simple value imputation, MICE (Multivariate Imputation by Chained Equations), and missForest. The code is adaptable to different datasets, as it identifies variable types automatically and handles missing data accordingly.
 ```{r}
 # Identification of binary and numeric variables in the dataset
@@ -164,7 +187,7 @@ if(missing_data == TRUE) {
 }
 ```
 
-# Old data imputation code
+## Old data imputation code
 ```{#r}
 if(missing_data == TRUE) {
   
@@ -221,7 +244,7 @@ if(missing_data == TRUE) {
 }
 ```
 
-# Train/Test split
+## Train/Test split
 Splits the data into training (80%) and testing (20%) sets to allow model training and performance evaluation. The split is randomized but reproducible due to the set seed.
 ```{r}
 # set seed
@@ -239,7 +262,7 @@ data_train <- data[train_index,]
 data_test <- data[-train_index,]
 ```
 
-# Scarce outcome intervention
+## Scarce outcome intervention
 This R code block is designed to address the issue of class imbalance in a dataset, specifically targeting the situation where one class (e.g., a crime outcome) is underrepresented (scarce outcome). It offers three different methods to handle the imbalance: random oversampling, SMOTE (Synthetic Minority Over-sampling Technique), and random undersampling. The code adjusts the training dataset accordingly based on the selected method.
 
 1. Random over-sampling
@@ -353,22 +376,42 @@ if (scarce_outcome == TRUE) {
 }
 ```
 
-# Linear regression
+# Machine Learning Algorithms
+
+## Linear regression
 Implements linear regression for predicting the probability of a crime. Linear regression models the relationship between the dependent variable (crime) and the independent variables (features) by fitting a linear equation to observed data.
 ```{r}
-if(algorithm == "linear_regression"){
-  # apply default linear regression
-  model <- glm(crime ~ ., data = data_train[,4:11])
-  
-  # obtain predicted probabilities for the training data
-  probabilities_train <- predict(model, newdata = data_train, type = "response")
-  
-  # obtain predicted probabilities for the test data
-  probabilities_test <- predict(model, newdata = data_test, type = "response") 
+if (algorithm == "linear_regression") {
+  if (tuned == FALSE) {
+    # Convert the target variable to numeric if it is a factor
+    data_train$crime <- as.numeric(as.factor(data_train$crime)) - 1
+    data_test$crime <- as.numeric(as.factor(data_test$crime)) - 1
+    
+    # Ensure all predictor variables are numeric
+    predictors <- colnames(data_train)[4:10] 
+    data_train[predictors] <- lapply(data_train[predictors], function(x) as.numeric(as.factor(x)))
+    data_test[predictors] <- lapply(data_test[predictors], function(x) as.numeric(as.factor(x)))
+    
+    # Remove rows with NA values
+    data_train <- na.omit(data_train)
+    data_test <- na.omit(data_test)
+    
+    # Apply default linear regression
+    model <- glm(crime ~ ., data = data_train[, c("crime", predictors)])
+    
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(model, newdata = data_train, type = "response")
+    
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- predict(model, newdata = data_test, type = "response")
+    
+  } else {
+    
+  }
 }
 ```
 
-# Logistic regression
+## Logistic regression
 Implements logistic regression to predict binary outcomes (crime or no crime). Logistic regression uses a logistic function to model the probability that a given input belongs to a certain class.
 ```{r}
 if(algorithm == "logistic_regression"){
@@ -384,107 +427,616 @@ if(algorithm == "logistic_regression"){
 }
 ```
 
-# Random Forest
-Implements a random forest model, an ensemble learning method that builds multiple decision trees and merges them together to get a more accurate and stable prediction. It works by averaging the predictions from each tree.
+## Random Forest
+This code block implements a Random Forest model, a powerful ensemble learning method that constructs multiple decision trees and combines their outputs to improve prediction accuracy and stability. The code has two main branches: one for training a default model with no tuning and another for a tuned model where specific parameters are optimized using cross-validation.
+
+*Default Model:* If the tuned parameter is set to FALSE, a Random Forest model is trained using the default settings. This model does not optimize any hyperparameters and directly fits the training data to predict the probability of the crime variable.
+
+*Tuned Model:* If the tuned parameter is set to TRUE, the model undergoes a series of tuning steps to find the best hyperparameters for mtry, sample_size, and ntree. These parameters are optimized using a 5-fold cross-validation process, and the model with the best average Area Under the Curve (AUC) across folds is selected.
+
+  *1. mtry:* This parameter controls the number of features considered at each split in the trees. Tuning mtry involves testing different values to find the one that maximizes the model's AUC. Lower mtry values can lead to more diverse trees, while higher values might reduce model diversity but improve individual tree accuracy.
+  
+  *2. sample_size:* This parameter determines the number of samples used to train each tree. By varying the sample_size, the model can adjust the balance between overfitting and generalization. Smaller sample sizes may introduce more variability into the model, which can improve its robustness.
+
+  *3. ntree:* This parameter specifies the number of trees in the forest. The code tests different ntree values to determine the optimal number of trees that balances between computational efficiency and prediction performance. More trees generally improve performance but with diminishing returns and increased computation time.
+After tuning, the model with the best combination of these parameters is trained on the entire training set and used to make predictions on both the training and test data.
+
 ```{r}
-if(algorithm == "random_forest"){
-  
-  # apply default random forest
-  model <- randomForest(as.factor(crime) ~ ., data = data_train[,4:11])
-  
-  # obtain predicted probabilities for the training data
-  probabilities_train <- predict(model, newdata = data_train, type = "prob")[,2]
-  
-  # obtain predicted probabilities for the test data
-  probabilities_test <- predict(model, newdata = data_test, type = "prob")[,2]
+if (algorithm == "random_forest") {
+  if (tuned == FALSE) {
+    # Default model without tuning parameters
+    model <- randomForest(as.factor(crime) ~ ., data = data_train[, 4:11])
+    
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(model, newdata = data_train, type = "prob")[, 2]
+    
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- predict(model, newdata = data_test, type = "prob")[, 2]
+    
+  } else {
+    # Tuning Random Forest Parameters
+    
+    # Set up 5-fold cross-validation
+    k <- 5
+    set.seed(123)  # For reproducibility
+    folds <- cut(seq(1, nrow(data_train)), breaks = k, labels = FALSE)
+    
+    # Step 1: Tune mtry
+    mtry_values <- 1:7
+    results <- data.frame(mtry = integer(), AUC = numeric())
+    round <- 0
+    
+    for (mtry in mtry_values) {
+      auc_values <- numeric()
+      
+      for (i in 1:k) {
+        # Split data into training and validation sets
+        train_indices <- which(folds != i)
+        validation_indices <- which(folds == i)
+        
+        train_data <- data_train[train_indices, ]
+        validation_data <- data_train[validation_indices, ]
+        
+        # Check if both classes are present in the validation data
+        if (length(unique(validation_data$crime)) == 2) {
+          # Train the model
+          model <- randomForest(as.factor(crime) ~ ., data = train_data[, 4:11], 
+                                mtry = mtry, ntree = 500)
+          
+          # Predict on validation data
+          probabilities_validation <- predict(model, newdata = validation_data, type = "prob")[, 2]
+          
+          # Calculate AUC
+          roc_curve <- roc(validation_data$crime, probabilities_validation)
+          auc_val <- auc(roc_curve)
+          auc_values <- c(auc_values, auc_val)
+        } else {
+          # Skip this fold if there's an issue with class balance
+          cat("Fold", i, "skipped due to lack of class balance.\n")
+        }
+        
+        round <- round + 1
+        cat(round, "/35 tuning mtry\n")
+      }
+      
+      # Calculate the mean AUC for this mtry value
+      if (length(auc_values) > 0) {
+        mean_auc <- mean(auc_values)
+        results <- rbind(results, data.frame(mtry = mtry, AUC = mean_auc))
+      } else {
+        cat("No valid AUC values for mtry =", mtry, "\n")
+      }
+    }
+    
+    # Print the best mtry
+    best_mtry <- results[which.max(results$AUC), "mtry"]
+    print(paste("Best mtry:", best_mtry))
+    
+    # Step 2: Tune sample size
+    sample_sizes <- c(1000, 2000, 4000, 5056, 8000)
+    results <- data.frame(sample_size = integer(), AUC = numeric())
+    round <- 0
+    
+    for (sample_size in sample_sizes) {
+      auc_values <- numeric()
+      
+      for (i in 1:k) {
+        # Split data into training and validation sets
+        train_indices <- which(folds != i)
+        validation_indices <- which(folds == i)
+        
+        train_data <- data_train[train_indices, ]
+        validation_data <- data_train[validation_indices, ]
+        
+        # Sample from training data if sample_size is less than total training size
+        if (sample_size < nrow(train_data)) {
+          sampled_train_data <- train_data[sample(seq_len(nrow(train_data)), size = sample_size), ]
+        } else {
+          sampled_train_data <- train_data
+        }
+        
+        # Train the model
+        model <- randomForest(as.factor(crime) ~ ., data = sampled_train_data[, 4:11], 
+                              mtry = best_mtry, ntree = 500)
+        
+        # Predict on validation data
+        probabilities_validation <- predict(model, newdata = validation_data, type = "prob")[, 2]
+        
+        # Calculate AUC
+        if (length(unique(validation_data$crime)) == 2) {
+          roc_curve <- roc(validation_data$crime, probabilities_validation)
+          auc_val <- auc(roc_curve)
+          auc_values <- c(auc_values, auc_val)
+        } else {
+          cat("Fold", i, "skipped due to lack of class balance.\n")
+        }
+        
+        round <- round + 1
+        cat(round, "/25 tuning sample size\n")
+      }
+      
+      # Calculate the mean AUC for this sample size
+      if (length(auc_values) > 0) {
+        mean_auc <- mean(auc_values)
+        results <- rbind(results, data.frame(sample_size = sample_size, AUC = mean_auc))
+      } else {
+        cat("No valid AUC values for sample size =", sample_size, "\n")
+      }
+    }
+    
+    # Print the best sample size
+    best_sample_size <- results[which.max(results$AUC), "sample_size"]
+    print(paste("Best sample size:", best_sample_size))
+    
+    # Step 3: Tune ntree
+    ntree_values <- c(500, 1000, 1500)
+    results <- data.frame(ntree = integer(), AUC = numeric())
+    round <- 0
+    
+    for (ntree in ntree_values) {
+      auc_values <- numeric()
+      
+      for (i in 1:k) {
+        # Split data into training and validation sets
+        train_indices <- which(folds != i)
+        validation_indices <- which(folds == i)
+        
+        train_data <- data_train[train_indices, ]
+        validation_data <- data_train[validation_indices, ]
+        
+        # Sample from training data if sample_size is less than total training size
+        if (best_sample_size < nrow(train_data)) {
+          sampled_train_data <- train_data[sample(seq_len(nrow(train_data)), size = best_sample_size), ]
+        } else {
+          sampled_train_data <- train_data
+        }
+        
+        # Train the model
+        model <- randomForest(as.factor(crime) ~ ., data = sampled_train_data[, 4:11], 
+                              mtry = best_mtry, ntree = ntree)
+        
+        # Predict on validation data
+        probabilities_validation <- predict(model, newdata = validation_data, type = "prob")[, 2]
+        
+        # Calculate AUC
+        if (length(unique(validation_data$crime)) == 2) {
+          roc_curve <- roc(validation_data$crime, probabilities_validation)
+          auc_val <- auc(roc_curve)
+          auc_values <- c(auc_values, auc_val)
+        } else {
+          cat("Fold", i, "skipped due to lack of class balance.\n")
+        }
+        
+        round <- round + 1
+        cat(round, "/15 tuning ntree\n")
+      }
+      
+      # Calculate the mean AUC for this ntree value
+      if (length(auc_values) > 0) {
+        mean_auc <- mean(auc_values)
+        results <- rbind(results, data.frame(ntree = ntree, AUC = mean_auc))
+      } else {
+        cat("No valid AUC values for ntree =", ntree, "\n")
+      }
+    }
+    
+    # Print the best ntree
+    best_ntree <- results[which.max(results$AUC), "ntree"]
+    print(paste("Best ntree:", best_ntree))
+    
+    # Fit the final model with the best parameters
+    final_model <- randomForest(as.factor(crime) ~ ., data = data_train[, 4:11], 
+                                mtry = best_mtry, ntree = best_ntree)
+    
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(final_model, newdata = data_train, type = "prob")[, 2]
+    
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- predict(final_model, newdata = data_test, type = "prob")[, 2]
+  }
 }
 ```
 
-# Support vector machnine
-Implements an SVM model, which classifies data by finding the hyperplane that best separates data into classes. The SVM uses a kernel function (like radial basis) to handle non-linear data. The script extracts the predicted probabilities of belonging to each class.
+## Support vector machnine
+This code block implements a Support Vector Machine (SVM) model, a powerful classification method that separates data into classes by finding the optimal hyperplane. The SVM is equipped to handle non-linear data through the use of a kernel function, such as the radial basis function (RBF). The code is structured to allow the training of either a default model or a tuned model depending on the value of the tuned parameter.
+
+*Default Model:* When tuned is set to FALSE, the SVM model is trained with default parameters, specifically using the radial basis function as the kernel. This model is used to predict the probabilities of the crime variable for both training and test datasets.
+
+*Tuned Model:* When tuned is set to TRUE, the script performs hyperparameter tuning through a 5-fold cross-validation process. It explores different combinations of C (cost) and gamma parameters to find the optimal values that maximize the model's AUC. The best combination is then used to train the final model, which is evaluated on both training and test datasets.
+
+  *1. C:* This parameter, also known as the cost parameter, controls the trade-off between maximizing the margin and minimizing the classification error. A small C value makes the decision surface smooth, while a large C tries to classify all training examples correctly by giving the model more flexibility to fit the data. Tuning C helps balance overfitting and underfitting.
+  
+  *2. gamma:* This parameter defines how far the influence of a single training example reaches, with low values meaning 'far' and high values meaning 'close'. In the context of the radial basis function (RBF) kernel, a small gamma value implies a more generalized decision boundary, while a large gamma value leads to a more complex model that can capture more details of the training data. Tuning gamma helps adjust the model's flexibility and complexity.
+  
+After tuning these parameters, the model that achieves the highest average AUC during cross-validation is selected and used for final predictions. The final model is trained on the entire training set using the optimal C and gamma values, and predicted probabilities are obtained for both training and test datasets.
 ```{r}
 if (algorithm == "svm") {
-
-  # Fit the SVM model (using a radial basis kernel as default)
-  model <- svm(as.factor(crime) ~ ., data = data_train[,4:11], probability = TRUE)
-  
-  # Obtain predicted probabilities for the training data
-  probabilities_train <- attr(predict(model, newdata = data_train, probability = TRUE), "probabilities")[,1]
-  
-  # Obtain predicted probabilities for the test data
-  probabilities_test <- attr(predict(model, newdata = data_test, probability = TRUE), "probabilities")[,1]
-}
-```
-
-# XGboost
-Implements XGBoost, a gradient boosting algorithm that builds an ensemble of decision trees iteratively, optimizing the model based on the errors of previous models. It’s known for high performance in predictive tasks.
-```{r}
-if (algorithm == "xgboost") {
-
-  # Convert data to numeric matrix, converting factors/characters to numeric
-  train_matrix <- data.matrix(data_train[, 4:10])
-  test_matrix <- data.matrix(data_test[, 4:10])
-  
-  # Convert target variable to numeric and ensure it is binary (0 and 1)
-  train_label <- as.numeric(as.factor(data_train$crime)) - 1 # Assumes 'crime' is a factor or character
-  test_label <- as.numeric(as.factor(data_test$crime)) - 1
-  
-  # Ensure labels are binary (0 and 1)
-  if (any(train_label < 0 | train_label > 1) || any(test_label < 0 | test_label > 1)) {
-    stop("Labels must be binary (0 and 1).")
+  if (tuned == FALSE) {
+    
+    # Fit the SVM model with a radial basis kernel as default
+    model <- svm(as.factor(crime) ~ ., data = data_train[,4:11], probability = TRUE)
+    
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- attr(predict(model, newdata = data_train, probability = TRUE), "probabilities")[,1]
+    
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- attr(predict(model, newdata = data_test, probability = TRUE), "probabilities")[,1]
+    
+  } else {
+    # Tuning SVM Parameters
+    
+    # Set up 5-fold cross-validation
+    k <- 5
+    set.seed(123)  # For reproducibility
+    folds <- cut(seq(1, nrow(data_train)), breaks = k, labels = FALSE)
+    
+    # Define parameter values to tune
+    C_values <- c(0.001, 0.01, 0.1, 1, 10, 100)
+    gamma_values <- c(0.001, 0.01, 0.1, 1, 10)
+    
+    # Initialize result storage
+    results <- data.frame(C = numeric(), gamma = numeric(), AUC = numeric())
+    round <- 0
+    
+    for (C in C_values) {
+      for (gamma in gamma_values) {
+        auc_values <- numeric()
+        
+        for (i in 1:k) {
+          # Split data into training and validation sets
+          train_indices <- which(folds != i)
+          validation_indices <- which(folds == i)
+          
+          train_data <- data_train[train_indices, ]
+          validation_data <- data_train[validation_indices, ]
+          
+          # Train the SVM model
+          model <- svm(as.factor(crime) ~ ., data = train_data[,4:11], 
+                        probability = TRUE, 
+                        cost = C, gamma = gamma)
+          
+          # Predict on validation data
+          probabilities_validation <- attr(predict(model, newdata = validation_data, probability = TRUE), "probabilities")[,1]
+          
+          # Calculate AUC
+          if (length(unique(validation_data$crime)) == 2) {
+            roc_curve <- roc(validation_data$crime, probabilities_validation)
+            auc_val <- auc(roc_curve)
+            auc_values <- c(auc_values, auc_val)
+          } else {
+            cat("Fold", i, "skipped due to lack of class balance.\n")
+          }
+          
+          round <- round + 1
+          cat(round, "/", length(C_values) * length(gamma_values) * k, " tuning SVM\n")
+        }
+        
+        # Calculate the mean AUC for this parameter combination
+        if (length(auc_values) > 0) {
+          mean_auc <- mean(auc_values)
+          results <- rbind(results, data.frame(C = C, gamma = gamma, AUC = mean_auc))
+        } else {
+          cat("No valid AUC values for C =", C, "gamma =", gamma, "\n")
+        }
+      }
+    }
+    
+    # Print the best parameters
+    best_params <- results[which.max(results$AUC), ]
+    print(paste("Best parameters: C =", best_params$C, ", gamma =", best_params$gamma))
+    
+    # Fit the final SVM model with the best parameters
+    final_model <- svm(as.factor(crime) ~ ., data = data_train[,4:11], 
+                        probability = TRUE,
+                        cost = best_params$C, gamma = best_params$gamma)
+    
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- attr(predict(final_model, newdata = data_train, probability = TRUE), "probabilities")[,1]
+    
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- attr(predict(final_model, newdata = data_test, probability = TRUE), "probabilities")[,1]
   }
-
-  # Create DMatrix objects for XGBoost
-  dtrain <- xgb.DMatrix(data = train_matrix, label = train_label)
-  dtest <- xgb.DMatrix(data = test_matrix, label = test_label)
-  
-  # Set default parameters for XGBoost
-  params <- list(
-    objective = "binary:logistic",
-    eval_metric = "logloss"
-  )
-  
-  # Train the XGBoost model
-  model <- xgboost(params = params, data = dtrain, nrounds = 100, verbose = 0)
-  
-  # Obtain predicted probabilities for the training data
-  probabilities_train <- predict(model, dtrain)
-  
-  # Obtain predicted probabilities for the test data
-  probabilities_test <- predict(model, dtest)
 }
 ```
 
-# Adaboost
-Implements AdaBoost, a boosting algorithm that combines multiple weak learners (usually decision stumps) to create a strong classifier. It assigns more weight to incorrectly classified instances to focus learning on difficult cases.
+## AdaBoost
+This code block implements an AdaBoost model, a popular boosting algorithm that combines multiple weak learners, typically decision stumps, to form a strong classifier. AdaBoost assigns higher weights to incorrectly classified instances, allowing the model to focus on these harder-to-classify cases in subsequent iterations. The code allows for training either a default AdaBoost model or a tuned version depending on the value of the tuned parameter.
+
+*Default Model:* When tuned is set to FALSE, the AdaBoost model is trained with default parameters (iter = 50 and nu = 0.1). The model is used to predict the probability of the crime variable for both the training and test datasets. The script ensures that the labels are binary (0 and 1) before fitting the model.
+
+*Tuned Model:* When tuned is set to TRUE, the script performs hyperparameter tuning using 5-fold cross-validation. It evaluates different combinations of n_estimators (the number of boosting rounds) and learning_rate (controls the contribution of each classifier) to identify the optimal settings that maximize the model's AUC. The final model is then trained using the best parameter values and used to predict probabilities on the training and test data.
+
+  *1. n_estimators:* This parameter specifies the number of boosting rounds or iterations. Each round adds a weak learner to the ensemble, with the goal of correcting the mistakes made by the previous learners. Tuning n_estimators helps determine the optimal number of iterations to balance between underfitting and overfitting.
+  
+  *2. learning_rate (nu):* This parameter controls the contribution of each weak learner to the final model. A smaller learning_rate requires more iterations to converge but can lead to better generalization by reducing the chance of overfitting. Conversely, a larger learning_rate speeds up training but might lead to overfitting. Tuning this parameter helps find the balance between model performance and training time.
+  
+After tuning, the model with the best combination of these parameters is trained on the entire training dataset. The final model is used to generate predicted probabilities for both the training and test data, providing insights into how well the model generalizes to new data.
+
 ```{r}
 if (algorithm == "adaboost") {
+  if (tuned == FALSE) {
+    # Ensure the target variable is binary (0 and 1)
+    train_label <- as.numeric(as.factor(data_train$crime)) - 1
+    test_label <- as.numeric(as.factor(data_test$crime)) - 1
   
+    # Ensure labels are binary (0 and 1)
+    if (any(train_label < 0 | train_label > 1) || any(test_label < 0 | test_label > 1)) {
+      stop("Labels must be binary (0 and 1).")
+    }
+    
+    # Prepare the training and test data
+    train_data <- data_train[, 4:10]
+    test_data <- data_test[, 4:10]
+    
+    # Fit the AdaBoost model
+    model <- ada(x = train_data, y = train_label, iter = 50, nu = 0.1, type = "real")
+    
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(model, newdata = train_data, type = "prob")[,2]
+    
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- predict(model, newdata = test_data, type = "prob")[,2]
+    
+  } else {
+    # Tuning AdaBoost Parameters
+    
+    # Set up 5-fold cross-validation
+    k <- 5
+    set.seed(123)  # For reproducibility
+    folds <- cut(seq(1, nrow(data_train)), breaks = k, labels = FALSE)
+    
+    # Define parameter values to tune
+    n_estimators_values <- c(40, 50, 60, 100)
+    learning_rate_values <- c(0.005, 0.01, 0.1, 0.2, 0.3)
+    
+    # Initialize result storage
+    results <- data.frame(n_estimators = integer(), learning_rate = numeric(), AUC = numeric())
+    round <- 0
+    
+    for (n_estimators in n_estimators_values) {
+      for (learning_rate in learning_rate_values) {
+        auc_values <- numeric()
+        
+        for (i in 1:k) {
+          # Split data into training and validation sets
+          train_indices <- which(folds != i)
+          validation_indices <- which(folds == i)
+          
+          train_data <- data_train[train_indices, 4:10]
+          train_label <- as.numeric(as.factor(data_train$crime[train_indices])) - 1
+          validation_data <- data_train[validation_indices, 4:10]
+          validation_label <- as.numeric(as.factor(data_train$crime[validation_indices])) - 1
+          
+          # Train the AdaBoost model
+          model <- ada(x = train_data, y = train_label, iter = n_estimators, nu = learning_rate, type = "real")
+          
+          # Predict on validation data
+          probabilities_validation <- predict(model, newdata = validation_data, type = "prob")[,2]
+          
+          # Calculate AUC
+          if (length(unique(validation_label)) == 2) {
+            roc_curve <- roc(validation_label, probabilities_validation)
+            auc_val <- auc(roc_curve)
+            auc_values <- c(auc_values, auc_val)
+          } else {
+            cat("Fold", i, "skipped due to lack of class balance.\n")
+          }
+          
+          round <- round + 1
+          cat(round, "/", length(n_estimators_values) * length(learning_rate_values) * k, " tuning AdaBoost\n")
+        }
+        
+        # Calculate the mean AUC for this parameter combination
+        if (length(auc_values) > 0) {
+          mean_auc <- mean(auc_values)
+          results <- rbind(results, data.frame(n_estimators = n_estimators, learning_rate = learning_rate, AUC = mean_auc))
+        } else {
+          cat("No valid AUC values for n_estimators =", n_estimators, "learning_rate =", learning_rate, "\n")
+        }
+      }
+    }
+    
+    # Print the best parameters
+    best_params <- results[which.max(results$AUC), ]
+    print(paste("Best parameters: n_estimators =", best_params$n_estimators, ", learning_rate =", best_params$learning_rate))
+    
+    # Fit the final AdaBoost model with the best parameters
+    final_model <- ada(x = data_train[, 4:10], y = as.numeric(as.factor(data_train$crime)) - 1, 
+                        iter = best_params$n_estimators, nu = best_params$learning_rate, type = "real")
+    
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(final_model, newdata = data_train[, 4:10], type = "prob")[,2]
+    
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- predict(final_model, newdata = data_test[, 4:10], type = "prob")[,2]
+  }
+}
+```
+
+## XGBoost
+This code block implements an XGBoost model, a powerful and scalable gradient boosting algorithm. XGBoost builds an ensemble of decision trees as base learners and optimizes for accuracy by minimizing a specified loss function. It includes regularization techniques to prevent overfitting and improve model generalization. The code allows for either default model training or hyperparameter tuning based on the value of the tuned parameter.
+
+*Default Model:* When tuned is set to FALSE, the XGBoost model is trained with default parameters: eta (learning rate) of 0.1, max_depth of 6, and nrounds (number of boosting rounds) set to 50. The model is used to predict the probability of the crime variable for both the training and test datasets. The script ensures that the labels are binary (0 and 1) and converts categorical variables to numeric before fitting the model.
+
+*Tuned Model:* When tuned is set to TRUE, the script performs hyperparameter tuning using 5-fold cross-validation. It evaluates different combinations of eta, max_depth, and nrounds to identify the optimal settings that maximize the model's AUC. The final model is then trained using the best parameter values and used to predict probabilities on the training and test data.
+
+  *1. eta:* Also known as the learning rate, this parameter controls the contribution of each new tree added to the model. Lower eta values slow down the learning process and require more boosting rounds (nrounds) but can lead to better model generalization.
+  
+  *2. max_depth:* This parameter sets the maximum depth of each decision tree. Deeper trees can model more complex patterns but are also more prone to overfitting. Tuning max_depth helps balance the trade-off between model complexity and generalization.
+  
+  *3. nrounds:* This parameter specifies the number of boosting iterations. More rounds increase the ensemble size, allowing the model to correct more errors, but too many rounds can lead to overfitting, especially if the learning rate is high.
+  
+After tuning, the model with the best combination of these parameters is trained on the entire training dataset. The final model is used to generate predicted probabilities for both the training and test data, providing insights into how well the model generalizes to new data.
+
+```{r}
+if (algorithm == "xgboost") {
   # Ensure the target variable is binary (0 and 1)
-  train_label <- as.numeric(as.factor(data_train$crime)) - 1 # Assumes 'crime' is a factor or character
+  train_label <- as.numeric(as.factor(data_train$crime)) - 1
   test_label <- as.numeric(as.factor(data_test$crime)) - 1
 
   # Ensure labels are binary (0 and 1)
   if (any(train_label < 0 | train_label > 1) || any(test_label < 0 | test_label > 1)) {
     stop("Labels must be binary (0 and 1).")
   }
-  
-  # Prepare the training and test data
+
+  # Convert categorical variables to numeric
   train_data <- data_train[, 4:10]
   test_data <- data_test[, 4:10]
-  
-  # Fit the AdaBoost model
-  model <- ada(x = train_data, y = train_label, iter = 50, nu = 0.1, type = "real")
-  
-  # Obtain predicted probabilities for the training data
-  probabilities_train <- predict(model, newdata = train_data, type = "prob")[,2]
-  
-  # Obtain predicted probabilities for the test data
-  probabilities_test <- predict(model, newdata = test_data, type = "prob")[,2]
+
+  train_data_xg <- as.data.frame(lapply(train_data, function(x) {
+    if (is.factor(x) || is.character(x)) {
+      as.numeric(as.factor(x))
+    } else {
+      x
+    }
+  }))
+
+  test_data_xg <- as.data.frame(lapply(test_data, function(x) {
+    if (is.factor(x) || is.character(x)) {
+      as.numeric(as.factor(x))
+    } else {
+      x
+    }
+  }))
+
+  # Convert the data to DMatrix format
+  train_matrix <- xgb.DMatrix(data = as.matrix(train_data_xg), label = train_label)
+  test_matrix <- xgb.DMatrix(data = as.matrix(test_data_xg), label = test_label)
+
+  if (tuned == FALSE) {
+    # Set the parameters for XGBoost
+    params <- list(
+      objective = "binary:logistic",
+      eval_metric = "auc",
+      eta = 0.1,
+      max_depth = 6,
+      nrounds = 50
+    )
+
+    # Fit the XGBoost model
+    model <- xgb.train(params = params, data = train_matrix, nrounds = params$nrounds)
+
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(model, newdata = train_matrix)
+
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- predict(model, newdata = test_matrix)
+
+  } else {
+    # Tuning XGBoost Parameters
+    
+    # Set up 5-fold cross-validation
+    k <- 5
+    set.seed(123)  # For reproducibility
+    folds <- cut(seq(1, nrow(data_train)), breaks = k, labels = FALSE)
+    
+    # Define parameter values to tune
+    eta_values <- c(0.01, 0.1, 0.2)
+    max_depth_values <- c(3, 6, 9)
+    nrounds_values <- c(50, 100, 150)
+    
+    # Initialize result storage
+    results <- data.frame(eta = numeric(), max_depth = numeric(), nrounds = numeric(), AUC = numeric())
+    round <- 0
+    
+    for (eta in eta_values) {
+      for (max_depth in max_depth_values) {
+        for (nrounds in nrounds_values) {
+          auc_values <- numeric()
+          
+          for (i in 1:k) {
+            # Split data into training and validation sets
+            train_indices <- which(folds != i)
+            validation_indices <- which(folds == i)
+            
+            train_data_cv <- data_train[train_indices, 4:10]
+            train_label_cv <- as.numeric(as.factor(data_train$crime[train_indices])) - 1
+            validation_data_cv <- data_train[validation_indices, 4:10]
+            validation_label_cv <- as.numeric(as.factor(data_train$crime[validation_indices])) - 1
+            
+            # Convert categorical variables to numeric in the CV sets
+            train_data_cv <- as.data.frame(lapply(train_data_cv, function(x) {
+              if (is.factor(x) || is.character(x)) {
+                as.numeric(as.factor(x))
+              } else {
+                x
+              }
+            }))
+            
+            validation_data_cv <- as.data.frame(lapply(validation_data_cv, function(x) {
+              if (is.factor(x) || is.character(x)) {
+                as.numeric(as.factor(x))
+              } else {
+                x
+              }
+            }))
+            
+            # Prepare data for XGBoost
+            train_matrix_cv <- xgb.DMatrix(data = as.matrix(train_data_cv), label = train_label_cv)
+            validation_matrix_cv <- xgb.DMatrix(data = as.matrix(validation_data_cv), label = validation_label_cv)
+            
+            # Set the parameters for XGBoost
+            params <- list(
+              objective = "binary:logistic",
+              eval_metric = "auc",
+              eta = eta,
+              max_depth = max_depth
+            )
+            
+            # Train the XGBoost model
+            model_cv <- xgb.train(params = params, data = train_matrix_cv, nrounds = nrounds, watchlist = list(eval = validation_matrix_cv, train = train_matrix_cv), verbose = 0)
+            
+            # Predict on validation data
+            probabilities_validation <- predict(model_cv, newdata = validation_matrix_cv)
+            
+            # Calculate AUC
+            if (length(unique(validation_label_cv)) == 2) {
+              roc_curve <- roc(validation_label_cv, probabilities_validation)
+              auc_val <- auc(roc_curve)
+              auc_values <- c(auc_values, auc_val)
+            } else {
+              cat("Fold", i, "skipped due to lack of class balance.\n")
+            }
+            
+            round <- round + 1
+            cat(round, "/", length(eta_values) * length(max_depth_values) * length(nrounds_values) * k, " tuning XGBoost\n")
+          }
+          
+          # Calculate the mean AUC for this parameter combination
+          if (length(auc_values) > 0) {
+            mean_auc <- mean(auc_values)
+            results <- rbind(results, data.frame(eta = eta, max_depth = max_depth, nrounds = nrounds, AUC = mean_auc))
+          } else {
+            cat("No valid AUC values for eta =", eta, "max_depth =", max_depth, "nrounds =", nrounds, "\n")
+          }
+        }
+      }
+    }
+    
+    # Print the best parameters
+    best_params <- results[which.max(results$AUC), ]
+    print(paste("Best parameters: eta =", best_params$eta, ", max_depth =", best_params$max_depth, ", nrounds =", best_params$nrounds))
+    
+    # Fit the final XGBoost model with the best parameters
+    final_params <- list(
+      objective = "binary:logistic",
+      eval_metric = "auc",
+      eta = best_params$eta,
+      max_depth = best_params$max_depth
+    )
+    
+    final_model <- xgb.train(params = final_params, data = train_matrix, nrounds = best_params$nrounds)
+    
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(final_model, newdata = train_matrix)
+    
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- predict(final_model, newdata = test_matrix)
+  }
 }
 ```
-
-# Obtain binary crime classification for test and training data
+# Model results
+## Obtain binary crime classification for test and training data
 Converts the predicted probabilities into binary classifications based on the threshold. It then creates confusion matrices to compare the predictions against actual labels.
 ```{r}
   # convert training data probabilities into binary depending on threshold
@@ -500,7 +1052,7 @@ Converts the predicted probabilities into binary classifications based on the th
   cm_test <- table(data_test$crime, prediction_test)
 ```
 
-# Inspect model efficiency (ROC & AUC)
+## Inspect model efficiency (ROC & AUC)
 Evaluates the model’s performance using metrics like ROC-AUC, which measures the trade-off between true positive and false positive rates, and accuracy, which measures the proportion of correct predictions.
 ```{r}
 # obtain ROC
@@ -519,8 +1071,8 @@ accuracy_test <- (cm_test[1,1] + cm_test[2,2]) / sum(cm_test)
 cat("### Model performance ###", "\nThe Area under the Curve is:", round(auc_value, 3), "\nAccuracy (training):",
     accuracy_train, "\nAccuracy (test):", accuracy_test)
 ```
-
-# Generation of confusion matrix for single sensitive attribute comparisons (gender, disability, ethnicity)
+# Fairness metrics
+## Generation of confusion matrix for single sensitive attribute comparisons (gender, disability, ethnicity)
 Generates confusion matrices for different subpopulations based on gender, disability, and ethnicity, allowing for an assessment of how well the model performs across these groups.
 ```{r}
 # 1. Gender comparison
@@ -563,7 +1115,7 @@ cm_test_minority <- table(data_test[indices_test_minority,]$crime, prediction_te
 cm_test_majority <- table(data_test[indices_test_majority,]$crime, prediction_test[indices_test_majority])
 ```
 
-# Benchmark metric
+## Benchmark metric
 Computes benchmark fairness metrics, including demographic parity (proportion of favorable outcomes), false positive rate (FPR), and false negative rate (FNR) for both training and test data.
 ```{r}
 # Calculate Benchmark metrics for training data
@@ -585,7 +1137,7 @@ cat("### Benchmark fairness measures ###\n\n1.Training Data\n- Demographic Parit
     round(FPR_benchmark_test,3), "\n- FNR:", round(FNR_benchmark_test,3))
 ```
 
-# Function to calculate fairness metrics 
+## Function to calculate fairness metrics 
 This R function, calculate_metrics, is designed to compute fairness metrics from a confusion matrix. It calculates key fairness metrics such as the proportion of favorable outcomes (Demographic Parity), False Positive Rate (FPR), and False Negative Rate (FNR) for a given model. The function also compares these metrics against a benchmark confusion matrix to provide ratios that indicate how the model's performance compares to the benchmark in terms of fairness.
 ```{r}
 # Function to calculate fairness metrics for a given confusion matrix
@@ -627,7 +1179,7 @@ calculate_metrics <- function(cm, cm_benchmark) {
 }
 ```
 
-# Calculation and display of the three fairness metrics for single senstive attribute comparisons
+## Calculation and display of the three fairness metrics for single senstive attribute comparisons
 This code block performs a detailed comparison of fairness metrics across different sensitive attributes (such as gender, disability status, and ethnicity) by calculating and displaying key metrics like Proportion of Favorable Outcome (Demographic Parity), False Positive Rate (FPR), and False Negative Rate (FNR). These metrics are calculated separately for both training and testing datasets, and results are compared against a benchmark to assess fairness.
 
 1. Comparative Fairness Analysis: The code performs a detailed comparative analysis of fairness across different sensitive groups, making it possible to identify biases in model predictions.
@@ -693,7 +1245,7 @@ display_results("Minority", metrics_train_minority, metrics_test_minority)
 display_results("Majority", metrics_train_majority, metrics_test_majority)
 ```
 
-# Function to find most advantages and disadvantaged subpopulations 
+## Function to find most advantages and disadvantaged subpopulations 
 This code block defines a function find_extremes that identifies the most privileged and most disadvantaged subpopulations based on three fairness metrics: False Positive Rate (FPR), False Negative Rate (FNR), and Proportion of Favorable Outcome (Demographic Parity). The function takes in a list of calculated metrics for various subpopulations and returns the subpopulation names that exhibit the most extreme values—either advantageous or disadvantageous—across these metrics.
 ```{r}
 # Function to find the most privileged and most disadvantaged subpopulations
@@ -726,7 +1278,7 @@ find_extremes <- function(metrics_list) {
 }
 ```
 
-# Assessment of fairness metrics on fine-grained subpopulations
+## Assessment of fairness metrics on fine-grained subpopulations
 This code block performs an assessment of fairness metrics across fine-grained subpopulations defined by combinations of gender, ethnicity, and disability status. It evaluates the model's performance on these subpopulations, identifying which groups are the most advantaged and disadvantaged based on various fairness metrics. The process involves calculating and displaying the metrics for each subpopulation, and then ranking them to determine which subpopulations are the most privileged and the most disadvantaged.
 
 1. Fine-Grained Fairness Analysis: By breaking down the dataset into small subpopulations based on multiple sensitive attributes, the code allows for a nuanced analysis of fairness.
