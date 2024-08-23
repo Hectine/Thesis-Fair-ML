@@ -1,0 +1,61 @@
+---
+title: "Comparison to best model"
+output: html_document
+date: "2024-08-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load library
+```{r}
+library(tidyverse)
+library(pROC)
+```
+
+# Comparison of ROC curves
+```{r}
+# Compute ROC for the current and best model
+roc_curve <- roc(data_test$crime, prediction_test)
+best_roc_curve <- roc(data_test$crime, best_predictions_test)
+
+# ROC of best model
+roc_plot_combined <- plot(roc(data_test$crime, best_predictions_test), print.auc = TRUE, col = "blue")
+
+# ROC of currently tested model
+roc_plot_combined <- plot(roc(data_test$crime, prediction_test), print.auc = TRUE, col = "green", add = TRUE)
+
+```
+# compute metrics fpr best model
+```{r}
+# Define best model for comparison
+best_model <- "Best Model"
+
+# Predicted probabilities for the best model
+best_probabilities <- best_probabilities_test  # Replace with actual variable name
+
+# Calculate metrics for benchmark (all data) for the best model
+best_benchmark_metrics <- calculate_metrics_for_group(data_plots, best_probabilities, threshold)
+
+# Calculate metrics for vulnerable group for the best model
+best_vulnerable_metrics <- calculate_metrics_for_group(data_plots, best_probabilities, threshold, gender_vulnerable, disability_vulnerable, ethnicity_vulnerable)
+
+# Calculate metrics for privileged group for the best model
+best_privileged_metrics <- calculate_metrics_for_group(data_plots, best_probabilities, threshold, gender_privileged, disability_privileged, ethnicity_privileged)
+
+# Store the metrics for plotting
+best_bench_FPR <- best_benchmark_metrics$FPR
+best_bench_FNR <- best_benchmark_metrics$FNR
+best_bench_proportion <- best_benchmark_metrics$proportion_favorable
+
+best_vulnerable_FPR <- best_vulnerable_metrics$FPR
+best_vulnerable_FNR <- best_vulnerable_metrics$FNR
+best_vulnerable_proportion <- best_vulnerable_metrics$proportion_favorable
+
+best_privileged_FPR <- best_privileged_metrics$FPR
+best_privileged_FNR <- best_privileged_metrics$FNR
+best_privileged_proportion <- best_privileged_metrics$proportion_favorable
+
+```
+
