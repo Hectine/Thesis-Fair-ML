@@ -127,6 +127,10 @@ scarce_outcome <- FALSE
 # - "random_undersampling"
 scarce_outcome_method <- "random_undersampling"
 
+# 6. Best model
+# Indicate whether current model is the best model, to use it for later comparisons
+best_model <- TRUE
+
 # Print out the setup parameters to confirm choices
 cat("Setup Parameters:\n")
 cat("Algorithm:", algorithm, "\n")
@@ -1071,6 +1075,25 @@ accuracy_test <- (cm_test[1,1] + cm_test[2,2]) / sum(cm_test)
 cat("### Model performance ###", "\nThe Area under the Curve is:", round(auc_value, 3), "\nAccuracy (training):",
     accuracy_train, "\nAccuracy (test):", accuracy_test)
 ```
+## Store Best Model (if applicable)
+Stores key values of the best model, that can later be used for comparisons.
+```{r}
+if(best_model == TRUE) {
+  # Model predictions
+  best_predictions_train <- prediction_train
+  best_predictions_test <- prediction_test
+  
+  # Confusion matrices
+  best_cm_train <- cm_train
+  best_cm_test <- cm_test
+  
+  # Model evaluation metrics
+  best_auc <- auc_value
+  best_accuary_train <- accuracy_train
+  best_accuary_test <- accuracy_test
+}
+```
+
 # Fairness metrics
 ## Generation of confusion matrix for single sensitive attribute comparisons (gender, disability, ethnicity)
 Generates confusion matrices for different subpopulations based on gender, disability, and ethnicity, allowing for an assessment of how well the model performs across these groups.
