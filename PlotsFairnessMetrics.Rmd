@@ -38,6 +38,9 @@ ethnicity_vulnerable <- "Minority"
 gender_privileged <- "Male"
 disability_privileged <- NULL
 ethnicity_privileged <- "Majority"
+
+# Best model
+best_model <- FALSE
 ```
 
 # Set-up to store values necessary for later plotting
@@ -171,6 +174,11 @@ plot_data <- data.frame(
             vulnerable_FNR_ratio, privileged_FNR_ratio)
 )
 
+# Best model: store for later usage
+if(best_model == TRUE) {
+  best_plot_data <- plot_data
+}
+
 # Plot
 ggplot(plot_data, aes(x = Threshold, y = Value, color = Group)) +
   geom_line(size = 1) +
@@ -212,6 +220,11 @@ combined_data <- data.frame(
   Value = c(bench_FPR, vulnerable_FPR, privileged_FPR, bench_FNR, vulnerable_FNR, privileged_FNR)
 )
 
+# Best model: store for later usage
+if(best_model == TRUE) {
+  best_combined_data <- combined_data
+}
+
 # Plot the combined data
 combined_plot <- ggplot(combined_data, aes(x = Threshold, y = Value, color = Group, linetype = Metric)) +
   geom_line(size = 1) +
@@ -238,6 +251,10 @@ proportion_data <- data.frame(
               each = length(threshold)),
   Proportion = c(bench_proportion, vulnerable_proportion, privileged_proportion)
 )
+
+if(best_model == TRUE) {
+  best_proportion_data <- proportion_data
+}
 
 # Plot the proportion of favorable outcomes
 proportion_plot <- ggplot(proportion_data, aes(x = Threshold, y = Proportion, color = Group)) +

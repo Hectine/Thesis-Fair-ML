@@ -76,7 +76,7 @@ Initializes key parameters including the choice of algorithm, whether model hype
 # - "svm"
 # - "xgboost"
 # - "adaboost"
-algorithm <- "linear_regression"
+algorithm <- "logistic_regression"
 
 # Ensure the chosen algorithm is valid
 valid_algorithms <- c("linear_regression", "logistic_regression", "random_forest", "svm", "xgboost", "adaboost")
@@ -87,7 +87,7 @@ if (!algorithm %in% valid_algorithms) {
 # 2. Tuned model
 # Indicates whether the model's hyperparameters will be optimized.
 # If set to TRUE, hyperparameter tuning methods will be applied.
-tuned <- TRUE
+tuned <- FALSE
 
 # 3. Threshold setting
 # Sets the decision boundary for classification.
@@ -129,7 +129,7 @@ scarce_outcome_method <- "random_undersampling"
 
 # 6. Best model
 # Indicate whether current model is the best model, to use it for later comparisons
-best_model <- TRUE
+best_model <- FALSE
 
 # Print out the setup parameters to confirm choices
 cat("Setup Parameters:\n")

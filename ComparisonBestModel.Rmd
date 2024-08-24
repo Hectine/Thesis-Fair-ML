@@ -8,13 +8,50 @@ date: "2024-08-23"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Overview
+This document provides a comprehensive comparison between the current model and the best model in terms of fairness metrics such as False Positive Rate (FPR), False Negative Rate (FNR), and demographic parity across different thresholds. The analysis is focused on identifying disparities between vulnerable (e.g., female, minority) and privileged (e.g., male, majority) groups.
+
+The set-up includes loading the necessary libraries and defining the groups and models under investigation. It requires specific data to be present in the global environment, including predictions and fairness metrics from prior simulations. The document aims to visualize and compare the performance of the two models using metrics such as ROC curves, ratios of FPR and FNR to a benchmark, demographic parity, and fairness disparity across various thresholds.
+
+The document generates several plots to visualize:
+- ROC curves of the models.
+- FPR and FNR comparisons for both models.
+- Proportion of favorable outcomes for demographic parity.
+- Threshold sensitivity, measuring absolute differences between models.
+- Fairness disparity between groups, focusing on the reduction of bias.
+
+Needs following stored in the global environment:
++ From analysis of simulation:
+- 1. prediction_test
+- 2. best_predictions_test
+- 3. data_test
+
++ From Plots Fairness Metrics:
+- 1. plot_data
+- 2. best_plot_data
+- 3. combined_data
+- 4. best_combined data
+- 5. proportion_data
+- 6. best_proportion_data
+
+The document systematically compares the current and best models using multiple fairness metrics and visualizations, helping to understand the strengths and weaknesses of each model across groups. It emphasizes the need to balance overall model performance with fairness, ensuring that vulnerable groups are not disproportionately affected by model biases.
+
 # Load library
 ```{r}
 library(tidyverse)
 library(pROC)
 ```
 
+# Setup of current model performance
+```{r}
+current_model <- "Logistic Regression"
+best_model <- "AdaBoost"
+```
+
 # Comparison of ROC curves
+*What it shows:* The ROC curve compares the True Positive Rate (Sensitivity) vs. False Positive Rate of both the current and best models. The ROC curve helps in assessing the overall classification performance across all thresholds. The Area Under the Curve (AUC) is printed for both models.
+
+*Interpretation:* The higher the AUC, the better the model is at distinguishing between positive and negative classes. Comparing the curves reveals which model performs better overall in terms of sensitivity and specificity.
 ```{r}
 # Compute ROC for the current and best model
 roc_curve <- roc(data_test$crime, prediction_test)
@@ -25,37 +62,131 @@ roc_plot_combined <- plot(roc(data_test$crime, best_predictions_test), print.auc
 
 # ROC of currently tested model
 roc_plot_combined <- plot(roc(data_test$crime, prediction_test), print.auc = TRUE, col = "green", add = TRUE)
+```
+
+# Comparison to Benchmark of FPR/FNR for current and best model
+*What it shows:* This plot compares the False Positive Rate (FPR) and False Negative Rate (FNR) ratios to the benchmark across thresholds for both models, vulnerable and privileged groups.
+
+*Interpretation:* If the ratio is greater than 1, it indicates that the group has a higher FPR/FNR than the benchmark (i.e., higher error). The plot helps assess how well each model handles the trade-offs between groups and the benchmark, identifying potential biases.
+```{r}
+# Assume best_model == TRUE has been run before and 'best_plot_data' & 'best_combined_data' are available.
+
+# Merge both models for FPR and FNR comparison in one plot (FPR/FNR Ratios)
+# Combine current model and best model data
+combined_plot_data <- rbind(
+  mutate(plot_data, Model = current_model),
+  mutate(best_plot_data, Model = "Best Model")
+)
+
+# Plot combined FPR/FNR ratios for both models
+ggplot(combined_plot_data, aes(x = Threshold, y = Value, color = Group, linetype = Model)) +
+  geom_line(size = 1) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey") +
+  labs(title = "FPR and FNR Ratios: Current vs Best Model",
+       x = "Threshold",
+       y = "Ratio to Benchmark",
+       color = "Group",
+       linetype = "Model") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+```
+
+# FPR and FNR comparison for Benchmark, vulnerable and priveleged group
+*What it shows:* FPR and FNR are plotted across thresholds for the benchmark, vulnerable, and privileged groups for both models.
+
+*Interpretation:* The plot helps compare how the two models treat different groups, especially focusing on whether vulnerable groups experience higher error rates. The goal is to identify whether the best model reduces disparity between groups in terms of FPR and FNR.
+```{r}
+# Combine current model and best model FPR/FNR data into a single data frame
+combined_metrics_data <- rbind(
+  mutate(combined_data, Model = current_model),
+  mutate(best_combined_data, Model = "Best Model")
+)
+
+# Plot the FPR and FNR for both models
+ggplot(combined_metrics_data, aes(x = Threshold, y = Value, color = Group, linetype = Model)) +
+  geom_line(size = 1) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(title = "FPR and FNR Comparison: Current vs Best Model",
+       x = "Threshold",
+       y = "Rate",
+       color = "Group",
+       linetype = "Model") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
 
 ```
-# compute metrics fpr best model
+
+# Demographic Parity Comparison - Group-wise favourable outcome comparison
+*What it shows:* This plot shows the proportion of favorable outcomes (no crime) across thresholds for the vulnerable and privileged groups for both models.
+
+*Interpretation:* By comparing these proportions, the plot helps determine how fair the model is in providing favorable outcomes across groups. A larger difference between groups indicates bias, while smaller differences show more equitable treatment.
 ```{r}
-# Define best model for comparison
-best_model <- "Best Model"
+# Combine demographic parity data for both models
+combined_proportion_data <- rbind(
+  mutate(proportion_data, Model = current_model),
+  mutate(best_proportion_data, Model = "Best Model")
+)
 
-# Predicted probabilities for the best model
-best_probabilities <- best_probabilities_test  # Replace with actual variable name
+# Plot demographic parity comparison
+ggplot(combined_proportion_data, aes(x = Threshold, y = Proportion, color = Group, linetype = Model)) +
+  geom_line(size = 1) +
+  labs(title = "Proportion of Favorable Outcomes: Current vs Best Model",
+       x = "Threshold",
+       y = "Proportion of Favorable Outcomes (No Crime)",
+       color = "Group",
+       linetype = "Model") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+```
 
-# Calculate metrics for benchmark (all data) for the best model
-best_benchmark_metrics <- calculate_metrics_for_group(data_plots, best_probabilities, threshold)
+# Threshold sensitivity analysis
+*What it shows:* This plot shows the absolute difference between the best and current models' FPR and FNR values for vulnerable and privileged groups across different thresholds.
 
-# Calculate metrics for vulnerable group for the best model
-best_vulnerable_metrics <- calculate_metrics_for_group(data_plots, best_probabilities, threshold, gender_vulnerable, disability_vulnerable, ethnicity_vulnerable)
+*Interpretation:* This helps assess how sensitive the models are to threshold variations and whether one model consistently outperforms the other. Larger differences at certain thresholds might indicate potential weaknesses or strengths of either model.
+```{r}
+# Calculate absolute differences between the current model and best model FPR/FNR for each group
+sensitivity_data <- combined_metrics_data %>%
+  group_by(Threshold, Metric, Group) %>%
+  summarise(Difference = abs(Value[Model == current_model] - Value[Model == "Best Model"]))
 
-# Calculate metrics for privileged group for the best model
-best_privileged_metrics <- calculate_metrics_for_group(data_plots, best_probabilities, threshold, gender_privileged, disability_privileged, ethnicity_privileged)
+# Plot the absolute differences in FPR and FNR between models
+ggplot(sensitivity_data, aes(x = Threshold, y = Difference, color = Group)) +
+  geom_line(size = 1) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(title = "Threshold Sensitivity Analysis: Absolute Difference Between Models",
+       x = "Threshold",
+       y = "Absolute Difference",
+       color = "Group") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "right")
+```
 
-# Store the metrics for plotting
-best_bench_FPR <- best_benchmark_metrics$FPR
-best_bench_FNR <- best_benchmark_metrics$FNR
-best_bench_proportion <- best_benchmark_metrics$proportion_favorable
+# Fairness Disparity Plot
+*What it shows:* This plot illustrates the disparity (absolute difference) in FPR and FNR between the vulnerable and privileged groups for both models, across thresholds.
 
-best_vulnerable_FPR <- best_vulnerable_metrics$FPR
-best_vulnerable_FNR <- best_vulnerable_metrics$FNR
-best_vulnerable_proportion <- best_vulnerable_metrics$proportion_favorable
+*Interpretation:* The plot helps evaluate how each model performs in reducing fairness disparity. A lower disparity indicates better fairness, meaning the model treats both groups similarly in terms of prediction errors.
+```{r}
+# Calculate the disparity between vulnerable and privileged groups for both FPR and FNR
+fairness_disparity_data <- combined_metrics_data %>%
+  group_by(Threshold, Metric, Model) %>%
+  summarise(Disparity = abs(Value[Group == paste("Vulnerable Group:", gender_vulnerable, ethnicity_vulnerable, disability_vulnerable)] - 
+                             Value[Group == paste("Privileged Group:", gender_privileged, ethnicity_privileged, disability_privileged)]))
 
-best_privileged_FPR <- best_privileged_metrics$FPR
-best_privileged_FNR <- best_privileged_metrics$FNR
-best_privileged_proportion <- best_privileged_metrics$proportion_favorable
-
+# Plot the fairness disparity for FPR and FNR
+ggplot(fairness_disparity_data, aes(x = Threshold, y = Disparity, color = Model)) +
+  geom_line(size = 1) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(title = "Fairness Disparity: Vulnerable vs Privileged Groups",
+       x = "Threshold",
+       y = "Disparity (Absolute Difference)",
+       color = "Model") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom")
 ```
 
