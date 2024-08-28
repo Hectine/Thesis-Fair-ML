@@ -45,7 +45,7 @@ library(pROC)
 # Setup of current model performance
 ```{r}
 current_model <- "Logistic Regression"
-best_model <- "AdaBoost"
+best_model <- "XGBoost"
 ```
 
 # Comparison of ROC curves

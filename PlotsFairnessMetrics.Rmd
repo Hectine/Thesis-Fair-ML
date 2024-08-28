@@ -19,9 +19,14 @@ library(cowplot)
 ```
 
 # Initial set-up
+This chunk initializes the key variables:
+*current_model:* Sets the model's name for labeling.
+*probabilities:* Represents the predicted probabilities from the test data.
+*data_plots:* Contains the data used for plotting, including the outcomes (e.g., crime).
+*Vulnerable and privileged groups* are defined, such as gender and ethnicity categories. These groupings are used later to analyze fairness metrics.
 ```{r}
 # Set current model for labelling of the plots
-current_model <- "Logistic Regression"
+current_model <- "XGBoost"
 
 # Predicted probabilities
 probabilities <- probabilities_test
@@ -44,6 +49,7 @@ best_model <- FALSE
 ```
 
 # Set-up to store values necessary for later plotting
+This section sets up containers to store values for three fairness measures (False Positive Rate (FPR), False Negative Rate (FNR), and the proportion of favorable outcomes) across different thresholds (from 0.05 to 0.95).
 ```{r}
 # Threshold sequence
 threshold <- seq(0.05, 0.95, 0.05)
@@ -66,6 +72,12 @@ privileged_proportion <- c()
 ```
 
 # Function to calculate the three fairness measures for the defined groups 
+This function, calculate_metrics_for_group(), calculates three key metrics:
+
+*False Positive Rate (FPR):* The probability of predicting a crime when no crime occurred.
+*False Negative Rate (FNR):* The probability of predicting no crime when a crime did occur.
+*Proportion of Favorable Outcomes:* The percentage of predictions where no crime occurred.
+It calculates these metrics across multiple thresholds and groups (vulnerable and privileged) based on gender, ethnicity, or disability.
 ```{r}
 # Function to calculate fairness metrics for a group
 calculate_metrics_for_group <- function(data, probabilities, threshold, gender = NULL, disability = NULL, ethnicity = NULL) {
@@ -130,6 +142,12 @@ calculate_metrics_for_group <- function(data, probabilities, threshold, gender =
 ```
 
 # Calculate metrics for defined groups and benchmark
+This chunk computes the fairness metrics for three groups:
+
+Benchmark: Overall metrics for the entire population.
+Vulnerable Group: Metrics specific to the vulnerable group (e.g., Female + Minority).
+Privileged Group: Metrics specific to the privileged group (e.g., Male + Majority).
+These computed values are stored in vectors (e.g., bench_FPR, vulnerable_FPR, etc.) for later plotting.
 ```{r}
 # Calculate metrics for benchmark (all data)
 benchmark_metrics <- calculate_metrics_for_group(data_plots, probabilities, threshold)
@@ -155,6 +173,9 @@ privileged_proportion <- privileged_metrics$proportion_favorable
 ```
 
 # Plots for ratio to benchmark of FPR and FNR, next to each other
+This plot shows the ratio of the FPR and FNR of both the vulnerable and privileged groups to the overall benchmark, across different thresholds.
+
+Interpretation: A line above 1 indicates the group has a higher rate (FPR or FNR) compared to the benchmark, meaning the model is more likely to make errors for that group. If both groups hover around 1, the model treats both groups similarly in terms of false positives or false negatives.
 ```{r}
 # Calculate the ratios
 vulnerable_FPR_ratio <- vulnerable_FPR / bench_FPR
@@ -193,6 +214,9 @@ ggplot(plot_data, aes(x = Threshold, y = Value, color = Group)) +
         legend.position = "bottom")
 ```
 # Ratio to benchmark of FPR and FNR in one plot
+This plot is similar to the previous one but combines the FPR and FNR ratios into a single graph with different line types for each metric.
+
+Interpretation: This allows for a clearer comparison of the relative differences in FPR and FNR across the vulnerable and privileged groups. Again, lines above 1 signify worse performance compared to the benchmark, highlighting potential bias.
 ```{r}
 # Plot
 ggplot(plot_data, aes(x = Threshold, y = Value, color = Group, linetype = Metric)) +
@@ -208,6 +232,9 @@ ggplot(plot_data, aes(x = Threshold, y = Value, color = Group, linetype = Metric
         legend.position = "right")
 ```
 # FNR and FPR for both groups and benchmark
+Here, FPR and FNR for both vulnerable and privileged groups, alongside the benchmark, are plotted against the threshold.
+
+Interpretation: This plot allows us to see the absolute values of the false positive and false negative rates for each group, rather than relative to the benchmark. A significant difference between groups would indicate potential unfairness or bias, with one group experiencing more false positives or false negatives at varying thresholds.
 ```{r}
 # Combine FPR and FNR data into a single data frame
 combined_data <- data.frame(
@@ -241,6 +268,9 @@ print(combined_plot)
 ```
 
 # Demographic parity plot (proportion of favourable (crime == 0) outcome)
+This plot shows the proportion of favorable outcomes (i.e., predictions of no crime) for the benchmark, vulnerable, and privileged groups.
+
+Interpretation: This plot examines demographic parity: whether each group receives favorable outcomes at similar rates. If there are large differences, this suggests that one group is being treated more favorably than the other, raising fairness concerns.
 ```{r}
 # Combine the proportion data into a single data frame
 proportion_data <- data.frame(

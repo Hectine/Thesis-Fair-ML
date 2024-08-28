@@ -68,7 +68,8 @@ library(xgboost)
 ## Analysis set-up
 Initializes key parameters including the choice of algorithm, whether model hyperparameters are tuned, and the classification threshold.
 ```{r}
-# 1. Model choice
+# 1. Machine learning algorithm
+# 1.1 Model choice
 # Select the algorithm for the analysis. Options include:
 # - "linear_regression"
 # - "logistic_regression"
@@ -84,12 +85,12 @@ if (!algorithm %in% valid_algorithms) {
   stop("Invalid algorithm chosen. Please select from the valid options: ", paste(valid_algorithms, collapse = ", "))
 }
 
-# 2. Tuned model
+# 1.2  Tuned model
 # Indicates whether the model's hyperparameters will be optimized.
 # If set to TRUE, hyperparameter tuning methods will be applied.
 tuned <- FALSE
 
-# 3. Threshold setting
+# 2. Threshold setting
 # Sets the decision boundary for classification.
 # This is relevant for binary classification models.
 threshold <- 0.5
@@ -99,11 +100,11 @@ if (threshold < 0 || threshold > 1) {
   stop("Threshold must be between 0 and 1.")
 }
 
-# 4.1 Missing data handling
+# 3.1 Missing data handling
 # Indicates whether the dataset contains missing data that needs to be addressed.
 missing_data <- FALSE
 
-# 4.2 Imputation method for missing data
+# 3.2 Imputation method for missing data
 # Choose an imputation method to handle missing values in the dataset. Options include:
 # - "simple_value_imputation": Imputes using mean for numeric and mode for categorical variables.
 # - "MICE_method": Multivariate Imputation by Chained Equations.
@@ -116,20 +117,23 @@ if (!NA_method %in% valid_imputation_methods) {
   stop("Invalid imputation method chosen. Please select from the valid options: ", paste(valid_imputation_methods, collapse = ", "))
 }
 
-# 5.1 Handling scarce outcome
+# 4.1 Handling scarce outcome
 # Indicate whether crime outcome is scarcely distributed in the dataset
 scarce_outcome <- FALSE
 
-# 5.2 Chose method to handle scarce outcome
+# 4.2 Chose method to handle scarce outcome
 # - "no_method"
 # - "SMOTE_method"
 # - "random_oversampling"
 # - "random_undersampling"
 scarce_outcome_method <- "random_undersampling"
 
-# 6. Best model
+# 5. Best model
 # Indicate whether current model is the best model, to use it for later comparisons
 best_model <- FALSE
+
+# 6. Initialise new data frame to store results
+initialize_df = FALSE
 
 # Print out the setup parameters to confirm choices
 cat("Setup Parameters:\n")
@@ -1374,5 +1378,138 @@ cat("\n### Most Disadvantaged Subpopulations (Test Data) ###\n")
 cat("1. Highest FPR:", extremes_test$most_disadvantaged$FPR, "\n")
 cat("2. Lowest FNR (least desirable):", extremes_test$most_disadvantaged$FNR, "\n")
 cat("3. Lowest Proportion of Favorable Outcome (Demographic Parity):", extremes_test$most_disadvantaged$Demographic_Parity, "\n")
+```
+
+# Store model results in table
+This code dynamically gathers model performance and fairness metrics, storing them in a structured table. The design supports easy comparison across different model configurations and demographic subpopulations, which is helpful for analyzing both accuracy and fairness in machine learning models.
+
+The list contains several categories:
+*Model performance metrics:* Includes auc, accuracy_test, and accuracy_train to measure the overall model performance.
+*Benchmark metrics:* Comprises fairness-related metrics such as the proportion of favorable outcomes and false positive/negative rates (FPR, FNR) for benchmark comparisons.
+*Single attribute comparisons:* Captures fairness metrics across specific demographic groups like gender (male, female), disability status (disabled, abled), and ethnicity (minority, majority). Each demographic group's favorable outcome rate and error rates (FPR, FNR) are recorded.
+*Subpopulation metrics:* Extends the fairness analysis by comparing combinations of demographic groups (e.g., Male_Minority_Yes, Female_Majority_No). These combinations have their respective favorable proportions, FPR, FNR, and corresponding ratios.
+
+```{r}
+# Create a list to store all extracted elements
+extracted_metrics <- list(
+  # Model performance
+  auc = auc_value,
+  accuracy_test = accuracy_test,
+  accuracy_train = accuracy_train,
+  
+  # Benchmark metrics
+  proportion_favorable_benchmark_test = proportion_favorable_benchmark_test,
+  FPR_benchmark_test = FPR_benchmark_test,
+  FNR_benchmark_test = FNR_benchmark_test,
+  
+  # Single attribute comparison
+  Male_proportion_favorable = metrics_test_male$proportion_favorable,
+  Male_FPR = metrics_test_male$FPR,
+  Male_FNR = metrics_test_male$FNR,
+  
+  Female_proportion_favorable = metrics_test_female$proportion_favorable,
+  Female_FPR = metrics_test_female$FPR,
+  Female_FNR = metrics_test_female$FNR,
+  
+  Disabled_proportion_favourable = metrics_test_disabled$proportion_favorable,
+  Disabled_FPR = metrics_test_disabled$FPR,
+  Disabled_FNR = metrics_test_disabled$FNR,
+  
+  Abled_proportion_favorable = metrics_test_abled$proportion_favorable,
+  Abled_FPR = metrics_test_abled$FPR,
+  Abled_FNR = metrics_test_abled$FNR,
+  
+  Minority_proportion_favorable = metrics_test_minority$proportion_favorable,
+  Minority_FPR = metrics_test_minority$FPR,
+  Minority_FNR = metrics_test_minority$FNR,
+  
+  Majority_proportion_favorable = metrics_test_majority$proportion_favorable,
+  Majority_FPR = metrics_test_majority$FPR,
+  Majority_FNR = metrics_test_majority$FNR,
+  
+  # Obtained metrics from subpopulations
+  # Male_Minority_Yes
+  Male_Minority_Yes_proportion_favorable = subpop_metrics_test$Male_Minority_Yes$proportion_favorable,
+  Male_Minority_Yes_proportion_favorable_ratio = subpop_metrics_test$Male_Minority_Yes$proportion_favorable_ratio,
+  Male_Minority_Yes_FPR = subpop_metrics_test$Male_Minority_Yes$FPR,
+  Male_Minority_Yes_FPR_ratio = subpop_metrics_test$Male_Minority_Yes$FPR_ratio,
+  Male_Minority_Yes_FNR = subpop_metrics_test$Male_Minority_Yes$FNR,
+  Male_Minority_Yes_FNR_ratio = subpop_metrics_test$Male_Minority_Yes$FNR_ratio,
+  
+  # Male_Minority_No
+  Male_Minority_No_proportion_favorable = subpop_metrics_test$Male_Minority_No$proportion_favorable,
+  Male_Minority_No_proportion_favorable_ratio = subpop_metrics_test$Male_Minority_No$proportion_favorable_ratio,
+  Male_Minority_No_FPR = subpop_metrics_test$Male_Minority_No$FPR,
+  Male_Minority_No_FPR_ratio = subpop_metrics_test$Male_Minority_No$FPR_ratio,
+  Male_Minority_No_FNR = subpop_metrics_test$Male_Minority_No$FNR,
+  Male_Minority_No_FNR_ratio = subpop_metrics_test$Male_Minority_No$FNR_ratio,
+  
+  # Male_Majority_Yes
+  Male_Majority_Yes_proportion_favorable = subpop_metrics_test$Male_Majority_Yes$proportion_favorable,
+  Male_Majority_Yes_proportion_favorable_ratio = subpop_metrics_test$Male_Majority_Yes$proportion_favorable_ratio,
+  Male_Majority_Yes_FPR = subpop_metrics_test$Male_Majority_Yes$FPR,
+  Male_Majority_Yes_FPR_ratio = subpop_metrics_test$Male_Majority_Yes$FPR_ratio,
+  Male_Majority_Yes_FNR = subpop_metrics_test$Male_Majority_Yes$FNR,
+  Male_Majority_Yes_FNR_ratio = subpop_metrics_test$Male_Majority_Yes$FNR_ratio,
+  
+  # Male_Majority_No
+  Male_Majority_No_proportion_favorable = subpop_metrics_test$Male_Majority_No$proportion_favorable,
+  Male_Majority_No_proportion_favorable_ratio = subpop_metrics_test$Male_Majority_No$proportion_favorable_ratio,
+  Male_Majority_No_FPR = subpop_metrics_test$Male_Majority_No$FPR,
+  Male_Majority_No_FPR_ratio = subpop_metrics_test$Male_Majority_No$FPR_ratio,
+  Male_Majority_No_FNR = subpop_metrics_test$Male_Majority_No$FNR,
+  Male_Majority_No_FNR_ratio = subpop_metrics_test$Male_Majority_No$FNR_ratio,
+  
+  # Female_Minority_Yes
+  Female_Minority_Yes_proportion_favorable = subpop_metrics_test$Female_Minority_Yes$proportion_favorable,
+  Female_Minority_Yes_proportion_favorable_ratio = subpop_metrics_test$Female_Minority_Yes$proportion_favorable_ratio,
+  Female_Minority_Yes_FPR = subpop_metrics_test$Female_Minority_Yes$FPR,
+  Female_Minority_Yes_FPR_ratio = subpop_metrics_test$Female_Minority_Yes$FPR_ratio,
+  Female_Minority_Yes_FNR = subpop_metrics_test$Female_Minority_Yes$FNR,
+  Female_Minority_Yes_FNR_ratio = subpop_metrics_test$Female_Minority_Yes$FNR_ratio,
+  
+  # Female_Minority_No
+  Female_Minority_No_proportion_favorable = subpop_metrics_test$Female_Minority_No$proportion_favorable,
+  Female_Minority_No_proportion_favorable_ratio = subpop_metrics_test$Female_Minority_No$proportion_favorable_ratio,
+  Female_Minority_No_FPR = subpop_metrics_test$Female_Minority_No$FPR,
+  Female_Minority_No_FPR_ratio = subpop_metrics_test$Female_Minority_No$FPR_ratio,
+  Female_Minority_No_FNR = subpop_metrics_test$Female_Minority_No$FNR,
+  Female_Minority_No_FNR_ratio = subpop_metrics_test$Female_Minority_No$FNR_ratio,
+  
+  # Female_Majority_Yes
+  Female_Majority_Yes_proportion_favorable = subpop_metrics_test$Female_Majority_Yes$proportion_favorable,
+  Female_Majority_Yes_proportion_favorable_ratio = subpop_metrics_test$Female_Majority_Yes$proportion_favorable_ratio,
+  Female_Majority_Yes_FPR = subpop_metrics_test$Female_Majority_Yes$FPR,
+  Female_Majority_Yes_FPR_ratio = subpop_metrics_test$Female_Majority_Yes$FPR_ratio,
+  Female_Majority_Yes_FNR = subpop_metrics_test$Female_Majority_Yes$FNR,
+  Female_Majority_Yes_FNR_ratio = subpop_metrics_test$Female_Majority_Yes$FNR_ratio,
+  
+  # Female_Majority_No
+  Female_Majority_No_proportion_favorable = subpop_metrics_test$Female_Majority_No$proportion_favorable,
+  Female_Majority_No_proportion_favorable_ratio = subpop_metrics_test$Female_Majority_No$proportion_favorable_ratio,
+  Female_Majority_No_FPR = subpop_metrics_test$Female_Majority_No$FPR,
+  Female_Majority_No_FPR_ratio = subpop_metrics_test$Female_Majority_No$FPR_ratio,
+  Female_Majority_No_FNR = subpop_metrics_test$Female_Majority_No$FNR,
+  Female_Majority_No_FNR_ratio = subpop_metrics_test$Female_Majority_No$FNR_ratio
+)
+
+if(initialize_df == TRUE) {
+  # Initialize the data frame with row names derived from the names of the list elements
+  df_metrics <- data.frame(matrix(ncol = 0, nrow = length(extracted_metrics)))
+  rownames(df_metrics) <- names(extracted_metrics)
+}
+
+# Create a descriptive column name
+column_name <- paste(
+  algorithm,
+  if (tuned) "Tuned" else "Not_Tuned",
+  paste0("Threshold_", threshold),
+  if (missing_data) paste0("MissingData_", NA_method) else "NoMissingData",
+  if (scarce_outcome) paste0("ScarceOutcome_", scarce_outcome_method) else "NoScarceOutcome",
+  sep = "__"
+)
+
+# Add the values from the list to the new column in the data frame
+df_metrics[[column_name]] <- unlist(extracted_metrics)
 ```
 
