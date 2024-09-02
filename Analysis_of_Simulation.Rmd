@@ -77,7 +77,7 @@ Initializes key parameters including the choice of algorithm, whether model hype
 # - "svm"
 # - "xgboost"
 # - "adaboost"
-algorithm <- "logistic_regression"
+algorithm <- "xgboost"
 
 # Ensure the chosen algorithm is valid
 valid_algorithms <- c("linear_regression", "logistic_regression", "random_forest", "svm", "xgboost", "adaboost")
@@ -1280,6 +1280,7 @@ find_extremes <- function(metrics_list) {
   most_privileged <- list(FPR = NULL, FNR = NULL, Demographic_Parity = NULL)
   most_disadvantaged <- list(FPR = NULL, FNR = NULL, Demographic_Parity = NULL)
   
+  # Initialize values for comparison
   min_FPR <- min(sapply(metrics_list, function(x) x$FPR), na.rm = TRUE)
   max_FNR <- max(sapply(metrics_list, function(x) x$FNR), na.rm = TRUE)
   max_DP <- max(sapply(metrics_list, function(x) x$proportion_favorable), na.rm = TRUE)
@@ -1288,17 +1289,28 @@ find_extremes <- function(metrics_list) {
   min_FNR <- min(sapply(metrics_list, function(x) x$FNR), na.rm = TRUE)
   min_DP <- min(sapply(metrics_list, function(x) x$proportion_favorable), na.rm = TRUE)
   
+  # Iterate through subpopulations to find the extremes
   for (subpop in names(metrics_list)) {
     metrics <- metrics_list[[subpop]]
     
-    # Safely compare metrics, only if they are not NA
-    if (!is.na(metrics$FPR) && metrics$FPR == min_FPR) most_privileged$FPR <- subpop
-    if (!is.na(metrics$FNR) && metrics$FNR == max_FNR) most_privileged$FNR <- subpop
-    if (!is.na(metrics$proportion_favorable) && metrics$proportion_favorable == max_DP) most_privileged$Demographic_Parity <- subpop
+    # Compare metrics and store both subpopulation and value
+    if (!is.na(metrics$FPR) && metrics$FPR == min_FPR) 
+      most_privileged$FPR <- list(subpop = subpop, value = metrics$FPR)
     
-    if (!is.na(metrics$FPR) && metrics$FPR == max_FPR) most_disadvantaged$FPR <- subpop
-    if (!is.na(metrics$FNR) && metrics$FNR == min_FNR) most_disadvantaged$FNR <- subpop
-    if (!is.na(metrics$proportion_favorable) && metrics$proportion_favorable == min_DP) most_disadvantaged$Demographic_Parity <- subpop
+    if (!is.na(metrics$FNR) && metrics$FNR == max_FNR) 
+      most_privileged$FNR <- list(subpop = subpop, value = metrics$FNR)
+    
+    if (!is.na(metrics$proportion_favorable) && metrics$proportion_favorable == max_DP) 
+      most_privileged$Demographic_Parity <- list(subpop = subpop, value = metrics$proportion_favorable)
+    
+    if (!is.na(metrics$FPR) && metrics$FPR == max_FPR) 
+      most_disadvantaged$FPR <- list(subpop = subpop, value = metrics$FPR)
+    
+    if (!is.na(metrics$FNR) && metrics$FNR == min_FNR) 
+      most_disadvantaged$FNR <- list(subpop = subpop, value = metrics$FNR)
+    
+    if (!is.na(metrics$proportion_favorable) && metrics$proportion_favorable == min_DP) 
+      most_disadvantaged$Demographic_Parity <- list(subpop = subpop, value = metrics$proportion_favorable)
   }
   
   return(list(most_privileged = most_privileged, most_disadvantaged = most_disadvantaged))
@@ -1356,28 +1368,75 @@ for (gender in c("Male", "Female")) {
 extremes_train <- find_extremes(subpop_metrics_train)
 extremes_test <- find_extremes(subpop_metrics_test)
 
-# Display the most privileged and disadvantaged subpopulations
-cat("### RANKING OF SUBPOPULATIONS###")
+# Display the most privileged and disadvantaged subpopulations along with their values
+cat("### RANKING OF SUBPOPULATIONS ###")
 
 cat("\n### Most Privileged Subpopulations (Training Data) ###\n")
-cat("1. Lowest FPR:", extremes_train$most_privileged$FPR, "\n")
-cat("2. Highest FNR (most desirable):", extremes_train$most_privileged$FNR, "\n")
-cat("3. Highest Proportion of Favorable Outcome (Demographic Parity):", extremes_train$most_privileged$Demographic_Parity, "\n")
+cat("1. Lowest FPR:", extremes_train$most_privileged$FPR$subpop, 
+    "(Value:", extremes_train$most_privileged$FPR$value, ")\n")
+cat("2. Highest FNR (most desirable):", extremes_train$most_privileged$FNR$subpop, 
+    "(Value:", extremes_train$most_privileged$FNR$value, ")\n")
+cat("3. Highest Proportion of Favorable Outcome (Demographic Parity):", extremes_train$most_privileged$Demographic_Parity$subpop, 
+    "(Value:", extremes_train$most_privileged$Demographic_Parity$value, ")\n")
 
 cat("\n### Most Disadvantaged Subpopulations (Training Data) ###\n")
-cat("1. Highest FPR:", extremes_train$most_disadvantaged$FPR, "\n")
-cat("2. Lowest FNR (least desirable):", extremes_train$most_disadvantaged$FNR, "\n")
-cat("3. Lowest Proportion of Favorable Outcome (Demographic Parity):", extremes_train$most_disadvantaged$Demographic_Parity, "\n")
+cat("1. Highest FPR:", extremes_train$most_disadvantaged$FPR$subpop, 
+    "(Value:", extremes_train$most_disadvantaged$FPR$value, ")\n")
+cat("2. Lowest FNR (least desirable):", extremes_train$most_disadvantaged$FNR$subpop, 
+    "(Value:", extremes_train$most_disadvantaged$FNR$value, ")\n")
+cat("3. Lowest Proportion of Favorable Outcome (Demographic Parity):", extremes_train$most_disadvantaged$Demographic_Parity$subpop, 
+    "(Value:", extremes_train$most_disadvantaged$Demographic_Parity$value, ")\n")
 
 cat("\n### Most Privileged Subpopulations (Test Data) ###\n")
-cat("1. Lowest FPR:", extremes_test$most_privileged$FPR, "\n")
-cat("2. Highest FNR (most desirable):", extremes_test$most_privileged$FNR, "\n")
-cat("3. Highest Proportion of Favorable Outcome (Demographic Parity):", extremes_test$most_privileged$Demographic_Parity, "\n")
+cat("1. Lowest FPR:", extremes_test$most_privileged$FPR$subpop, 
+    "(Value:", extremes_test$most_privileged$FPR$value, ")\n")
+cat("2. Highest FNR (most desirable):", extremes_test$most_privileged$FNR$subpop, 
+    "(Value:", extremes_test$most_privileged$FNR$value, ")\n")
+cat("3. Highest Proportion of Favorable Outcome (Demographic Parity):", extremes_test$most_privileged$Demographic_Parity$subpop, 
+    "(Value:", extremes_test$most_privileged$Demographic_Parity$value, ")\n")
 
 cat("\n### Most Disadvantaged Subpopulations (Test Data) ###\n")
-cat("1. Highest FPR:", extremes_test$most_disadvantaged$FPR, "\n")
-cat("2. Lowest FNR (least desirable):", extremes_test$most_disadvantaged$FNR, "\n")
-cat("3. Lowest Proportion of Favorable Outcome (Demographic Parity):", extremes_test$most_disadvantaged$Demographic_Parity, "\n")
+cat("1. Highest FPR:", extremes_test$most_disadvantaged$FPR$subpop, 
+    "(Value:", extremes_test$most_disadvantaged$FPR$value, ")\n")
+cat("2. Lowest FNR (least desirable):", extremes_test$most_disadvantaged$FNR$subpop, 
+    "(Value:", extremes_test$most_disadvantaged$FNR$value, ")\n")
+cat("3. Lowest Proportion of Favorable Outcome (Demographic Parity):", extremes_test$most_disadvantaged$Demographic_Parity$subpop, 
+    "(Value:", extremes_test$most_disadvantaged$Demographic_Parity$value, ")\n")
+```
+# Check 80%-Rule
+```{r}
+# FPR
+# If this ratio is greater than 1.25, it indicates potential bias against the disadvantaged group.
+FPR_80 <- extremes_test$most_disadvantaged$FPR$value / extremes_test$most_privileged$FPR$value
+
+# FNR
+# Again, if this ratio exceeds 1.25, it suggests potential bias.
+FNR_80 <- extremes_test$most_privileged$FNR$value / extremes_test$most_disadvantaged$FNR$value
+
+# Demographic Parity
+# If this ratio is less than 0.8, it indicates potential adverse impact against the disadvantaged group.
+parity_80 <- extremes_test$most_disadvantaged$Demographic_Parity$value / extremes_test$most_privileged$Demographic_Parity$value
+
+# Print results
+cat("**80% RULE**\n", "1. FPR ratio:", FPR_80, "\n")
+if(FPR_80 < 1.25){
+  cat("No potential bias between groups for FPR.\n")
+} else {
+  cat("Potential bias between groups for FPR.\n")
+}
+cat("2. FNR ratio:", FNR_80, "\n")
+if(FNR_80 < 1.25) {
+  cat("No potential bias between groups for FPR.\n")
+} else {
+  cat("Potential bias between groups for FNR.\n")
+}
+cat("3. Dempgraphic Parity:", parity_80, "\n") 
+if(parity_80 > 0.8) {
+  cat("No potential bias for demographic parity.")
+} else {
+  cat("Potential bias for demographic parity.")
+}
+
 ```
 
 # Store model results in table
