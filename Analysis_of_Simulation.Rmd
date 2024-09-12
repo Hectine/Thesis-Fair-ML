@@ -88,7 +88,7 @@ if (!algorithm %in% valid_algorithms) {
 # 1.2  Tuned model
 # Indicates whether the model's hyperparameters will be optimized.
 # If set to TRUE, hyperparameter tuning methods will be applied.
-tuned <- FALSE
+tuned <- TRUE
 
 # 2. Threshold setting
 # Sets the decision boundary for classification.
@@ -102,14 +102,14 @@ if (threshold < 0 || threshold > 1) {
 
 # 3.1 Missing data handling
 # Indicates whether the dataset contains missing data that needs to be addressed.
-missing_data <- FALSE
+missing_data <- TRUE
 
 # 3.2 Imputation method for missing data
 # Choose an imputation method to handle missing values in the dataset. Options include:
 # - "simple_value_imputation": Imputes using mean for numeric and mode for categorical variables.
 # - "MICE_method": Multivariate Imputation by Chained Equations.
 # - "Miss_Forest_Imputation": Imputation using Random Forests.
-NA_method <- "simple_value_imputation"
+NA_method <- "Miss_Forest_Imputation"
 
 # Ensure the chosen imputation method is valid
 valid_imputation_methods <- c("simple_value_imputation", "MICE_method", "Miss_Forest_Imputation")
@@ -119,7 +119,7 @@ if (!NA_method %in% valid_imputation_methods) {
 
 # 4.1 Handling scarce outcome
 # Indicate whether crime outcome is scarcely distributed in the dataset
-scarce_outcome <- FALSE
+scarce_outcome <- TRUE
 
 # 4.2 Chose method to handle scarce outcome
 # - "no_method"
@@ -939,9 +939,13 @@ if (algorithm == "xgboost") {
     folds <- cut(seq(1, nrow(data_train)), breaks = k, labels = FALSE)
     
     # Define parameter values to tune
-    eta_values <- c(0.01, 0.1, 0.2)
-    max_depth_values <- c(3, 6, 9)
-    nrounds_values <- c(50, 100, 150)
+    #eta_values <- c(0.01, 0.1, 0.2)
+    #max_depth_values <- c(3, 6, 9)
+    #nrounds_values <- c(50, 100, 150)
+    
+    eta_values <- c(0.01, 0.2)
+    max_depth_values <- c(3, 9)
+    nrounds_values <- c(100)
     
     # Initialize result storage
     results <- data.frame(eta = numeric(), max_depth = numeric(), nrounds = numeric(), AUC = numeric())

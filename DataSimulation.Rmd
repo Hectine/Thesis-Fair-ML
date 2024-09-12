@@ -46,7 +46,7 @@ non_linear_income <- FALSE
 
 # missing data points set-up
 # TRUE when dataset should contain missing values
-missing_data <- FALSE
+missing_data <- TRUE
 
 # Set-up for decision boundary
 # Set to TRUE for non-linear decision boundary, FALSE for linear
@@ -54,7 +54,7 @@ non_linear <- TRUE
 
 # Scarcity of crime outcome
 # Adjust threshold based on desired scarcity (e.g., target 10% crime rate)
-target_crime_rate <- 0.5
+target_crime_rate <- 0.15
 
 # Flipping target label (crime) to introduce more noise
 swap_rate <- 0.09
@@ -551,12 +551,51 @@ if(non_linear == TRUE){
   non_linear_component <- -0.05 * (simulated_data$income)^2 + 
                           0.02 * (simulated_data$new_var * simulated_data$new_var2) + 
                           -0.03 * (simulated_data$income * as.numeric(simulated_data$education))
+  # Adjust scope of values
+  non_linear_component <- non_linear_component / median(non_linear_component)
   
+  # Include upper-middle class criminality
+  lower_bracket <- quantile(income, probs = 0.6)
+  upper_bracket <- quantile(income, probs = 0.75)
+  
+  crime_increase <- ifelse(simulated_data$income > lower_bracket & simulated_data$income < upper_bracket, 1, 0)
+  
+  crime_increase_noise <- ifelse(crime_increase == 1, 
+                                 rnorm(sum(crime_increase), mean = 0.5, sd = 0.5), 
+                                 0)
+  # Include lowered middle class crime
+  lower_bracket <- quantile(income, probs = 0.35)
+  upper_bracket <- quantile(income, probs = 0.50)
+  
+  crime_decrease <- ifelse(simulated_data$income > lower_bracket & simulated_data$income < upper_bracket, -1, 0)
+  
+  crime_decrease_noise <- ifelse(crime_decrease == -1, 
+                                 rnorm(abs(sum(crime_decrease)), mean = -0.6, sd = 0.5), 
+                                 0)
+  
+  # Add non-linearity to education
+  # Increase for higher education
+  crime_increase_education <- ifelse(simulated_data$education == "Master's" | simulated_data$education == "Doctorate", 
+                                     sample(c(0,1), 100, replace = TRUE, prob = c(0.60, 0.40)), 
+                                     0)
+  crime_increase_education_noise <- ifelse(crime_increase_education == 1, 
+                                 rnorm(sum(crime_increase_education), mean = 1, sd = 0.5), 
+                                 0)
+  
+  # Decrease for High School
+  crime_decrease_education <- ifelse(simulated_data$education == "High School", 
+                                     sample(c(0,-1), 100, replace = TRUE, prob = c(0.80, 0.20)), 
+                                     0)
+  crime_decrease_education_noise <- ifelse(crime_decrease_education == -1, 
+                                 rnorm(abs(sum(crime_decrease_education)), mean = -0.5, sd = 0.5), 
+                                 0)  
+
+
   # Combine linear and non-linear components
-  combined_effect <- linear_combination + non_linear_component
-} else {
-  combined_effect <- linear_combination
-}
+  combined_effect <- linear_combination - non_linear_component + crime_increase + crime_increase_noise + crime_decrease + crime_decrease_noise + crime_increase_education + crime_increase_education_noise + crime_decrease_education + crime_decrease_education_noise
+  } else {
+    combined_effect <- linear_combination
+  }
 
 # Normalize the combined effect and convert back to vector
 combined_effect <- as.vector(scale(combined_effect, center = TRUE, scale = TRUE)) # Ensure it's a vector
@@ -568,12 +607,37 @@ crime_prob <- sigmoid(combined_effect)
 noise <- rnorm(length(crime_prob), mean = 0, sd = noise_crime)
 crime_prob <- pmin(pmax(crime_prob + noise, 0), 1)
 
+# Obtain binariry classifications
 # Dynamic Threshold Adjustment
 # Adjust threshold based on desired scarcity in set-up at beginning of the R markdown (e.g., target 10% crime rate)
 scarcity_threshold <- quantile(crime_prob, 1 - target_crime_rate, na.rm = TRUE)
+  
+if(non_linear == FALSE) {
+  # Generate binary crime variable based on adjusted threshold
+  simulated_data$crime <- ifelse(crime_prob > scarcity_threshold, 1, 0)
+} else {
+  # Split crime_prob into two groups: above and below scarcity_threshold
+  above_threshold <- which(crime_prob > scarcity_threshold)
+  below_threshold <- which(crime_prob <= scarcity_threshold)
+  
+  # Identify the bottom 20% below the threshold
+  bottom_20_below_threshold <- below_threshold[crime_prob[below_threshold] <= quantile(crime_prob[below_threshold], 0.2)]
+  
+  # Randomly select 70% from above the threshold and 30% from the bottom 20% below the threshold
+  set.seed(123) # Ensure reproducibility
+  selected_above <- sample(above_threshold, size = floor(0.8 * length(above_threshold)), replace = FALSE)
+  selected_below <- sample(bottom_20_below_threshold, size = floor(0.2 * length(above_threshold)), replace = FALSE)
+  
+  # Combine both selections
+  final_selection <- c(selected_above, selected_below)
+  
+  # Initialize simulated_data$crime as zeros (no crime) for everyone
+  simulated_data$crime <- 0
+  
+  # Assign crime = 1 to the selected cases
+  simulated_data$crime[final_selection] <- 1
+}
 
-# Generate binary crime variable based on adjusted threshold
-simulated_data$crime <- ifelse(crime_prob > scarcity_threshold, 1, 0)
 
 # Summarize the new crime variable
 summary(simulated_data$crime)
@@ -632,7 +696,7 @@ create_missing_values <- function(data, var_names, proportion = NULL, num_missin
     if (is.numeric(data[[var_name]])) {
       # Quantile-based probability for continuous variables
       quantiles <- quantile(data[[var_name]], probs = c(0.25, 0.5, 0.75, 1.0), na.rm = TRUE)
-      probabilities <- c(0.1, 0.3, 0.5, 0.7)  # Example: Increase missingness probability across quantiles
+      probabilities <- c(0.7, 0.3, 0.1, 0.3)  # Example: Increase missingness probability across quantiles
       data$missing_prob <- cut(data[[var_name]], breaks = c(-Inf, quantiles), labels = probabilities, include.lowest = TRUE)
       data$missing_prob <- as.numeric(as.character(data$missing_prob))
     } else {
@@ -673,12 +737,14 @@ create_missing_values <- function(data, var_names, proportion = NULL, num_missin
     }
     
     var_name <- var_names[1]
-    linear_combination <- 0
-    for (var in sensitive_var) {
-      linear_combination <- linear_combination + as.numeric(data[[var]])
-    }
-    probabilities <- 1 / (1 + exp(-linear_combination))  # Sigmoid function to calculate probabilities
+    
+    # Assuming 'ethnicity' and 'disability' are categorical with minority values as 'minority', 'disabled'
+    probabilities <- ifelse(data$ethnicity == "minority" | data$disability == "disabled", 0.7, 0.1)
+    
+    # Apply probabilities for missingness (higher for minority/disability)
     data$missing_prob <- probabilities
+    
+    # Select indices for missing values
     missing_indices <- order(-data$missing_prob)[1:num_missing]
     data[missing_indices, var_name] <- NA
     data$missing_prob <- NULL  # Clean up
@@ -687,24 +753,25 @@ create_missing_values <- function(data, var_names, proportion = NULL, num_missin
   return(data)
 }
 
-
-if(missing_data == TRUE){
+# Simulate missing data according to the specified scenarios
+if (missing_data == TRUE) {
   # Adding random missing values
   simulated_data <- create_missing_values(simulated_data, var_names = c("income", "education"), 
-                                        proportion = 0.02, type = "random")
+                                          proportion = 0.02, type = "random")
 
-  # Adding distribution-based missing values
+  # Adding sensitive-based missing values (income: more missing for minorities and disabled)
   simulated_data <- create_missing_values(simulated_data, var_names = "income", 
-                                          num_missing = 100, type = "distribution")
-  
-  # Adding dependent missing values
+                                          proportion = 0.06, type = "sensitive",
+                                          sensitive_var = c("ethnicity", "disability"))
+
+  # Adding dependent missing values (new_var4: based on income and education)
   simulated_data <- create_missing_values(simulated_data, var_names = "new_var4", 
                                           num_missing = 75, type = "dependent", 
                                           open_var = c("income", "education"))
-  
-  # Adding sensitive-dependent missing values
+
+  # Adding sensitive-dependent missing values (house_ownership: more missing for females and minorities)
   simulated_data <- create_missing_values(simulated_data, var_names = "house_ownership", 
-                                          num_missing = 75, type = "sensitive", 
+                                          num_missing = 85, type = "sensitive", 
                                           sensitive_var = c("gender", "ethnicity"))
   
   # Overview of NA values
