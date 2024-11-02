@@ -1,0 +1,481 @@
+---
+title: "InitialAnalysis2"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse,)
+```
+
+```{r}
+init_data <- read.csv("initialAnalysis.csv")
+
+head(init_data)
+```
+
+```{r}
+init_data <- init_data[c(1,8,9,11,12),]
+init_data <- as.data.frame(t(init_data))
+
+names(init_data) <- init_data[1,]
+init_data <- init_data[-1,]
+
+head(init_data)
+```
+
+```{r}
+init_data$Algorithm_Info <- as.character(rownames(init_data))
+
+# Separate the algorithm column into multiple columns
+init_data <- init_data %>%
+  separate(Algorithm_Info, into = c("algorithm", "tuning", "threshold", "imputation", "scarcity_intervention"), sep = "__")
+
+# Simplify the new columns
+init_data$tuning <- ifelse(init_data$tuning == "Tuned", "True", "False")
+init_data$imputation <- ifelse(grepl("Miss_Forest_Imputation", init_data$imputation), "random_forest_imputation", "simple_imputation")
+init_data$scarcity_intervention <- ifelse(grepl("random_undersampling", init_data$scarcity_intervention), "random_undersampling", "no_method")
+
+# Print the transformed data frame
+head(init_data)
+```
+```{r}
+df_analysis <- init_data[,c(6:10, 1:5)]
+rownames(df_analysis) <- NULL
+df_analysis <- df_analysis[,-3]
+
+df_analysis <- df_analysis %>% 
+  pivot_longer(cols = c(Male_FPR, Male_FNR, Female_FPR, Female_FNR),
+               names_to = c("gender", ".value"),
+               names_pattern = "(Male|Female)_(FPR|FNR)")
+
+df_analysis <- df_analysis %>% 
+  mutate(auc = as.numeric(auc),
+         FPR = as.numeric(FPR),
+         FNR = as.numeric(FNR))
+
+head(df_analysis)
+```
+
+```{r}
+# FPR
+ggplot(df_analysis, aes(x = algorithm, y = FPR, fill = gender)) +
+  # Bars for FPR by gender
+  geom_bar(stat = "identity", position = "dodge") +
+  
+  # Add bars for AUC
+  geom_bar(aes(x = algorithm, y = as.numeric(auc)), 
+           stat = "identity", fill = "black", alpha = 0.5, position = "dodge", width = 0.2) +
+  
+  # Facet based on imputation, scarcity intervention, and tuning
+  facet_grid(imputation ~ scarcity_intervention + tuning, scales = "fixed") +
+  
+  # Set y-axis limits from 0 to 1, and control tick breaks
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+  
+  # Change the labels for gender, algorithm names, tuning, and scarcity intervention
+  scale_fill_manual(values = c("Male" = "blue", "Female" = "red"), name = "Gender") +
+  
+  # Change x-axis labels
+  scale_x_discrete(labels = c("logistic_regression" = "Logistic Regression", "xgboost" = "XGBoost")) +
+  
+  # Change facet labels for tuning and scarcity interventions
+  scale_fill_discrete(name = "Gender") +
+  facet_grid(imputation ~ scarcity_intervention + tuning, 
+             labeller = labeller(scarcity_intervention = c(
+                                  "no_method" = "No scarcity intervention", 
+                                  "random_undersampling" = "Random under sampling"),
+                                 tuning = c("True" = "Tuned", "False" = "Not tuned"),
+                                 imputation = c("simple_imputation" = "Simple imputation", "random_forest_imputation" = "Random forest imputation"))) +
+  
+  # Labels and titles
+  labs(title = "Impact of Engineering Choices on FPR by Gender and AUC",
+       x = "Machine Learning Algorithm",
+       y = "False Positive Rate (FPR) / AUC (black bars)") +
+  
+  # Minimal theme and rotated x-axis labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(size = 10, face = "bold"))  # Adjust legend title size for aesthetics
+
+# FNR
+ggplot(df_analysis, aes(x = algorithm, y = FNR, fill = gender)) +
+  # Bars for FPR by gender
+  geom_bar(stat = "identity", position = "dodge") +
+  
+  # Add bars for AUC
+  geom_bar(aes(x = algorithm, y = as.numeric(auc)), 
+           stat = "identity", fill = "black", alpha = 0.5, position = "dodge", width = 0.2) +
+  
+  # Facet based on imputation, scarcity intervention, and tuning
+  facet_grid(imputation ~ scarcity_intervention + tuning, scales = "fixed") +
+  
+  # Set y-axis limits from 0 to 1, and control tick breaks
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+  
+  # Change the labels for gender, algorithm names, tuning, and scarcity intervention
+  scale_fill_manual(values = c("Male" = "blue", "Female" = "red"), name = "Gender") +
+  
+  # Change x-axis labels
+  scale_x_discrete(labels = c("logistic_regression" = "Logistic Regression", "xgboost" = "XGBoost")) +
+  
+  # Change facet labels for tuning and scarcity interventions
+  scale_fill_discrete(name = "Gender") +
+  facet_grid(imputation ~ scarcity_intervention + tuning, 
+             labeller = labeller(scarcity_intervention = c(
+                                  "no_method" = "No scarcity intervention", 
+                                  "random_undersampling" = "Random under sampling"),
+                                 tuning = c("True" = "Tuned", "False" = "Not tuned"),
+                                 imputation = c("simple_imputation" = "Simple imputation", "random_forest_imputation" = "Random forest imputation"))) +
+  
+  # Labels and titles
+  labs(title = "Impact of Engineering Choices on FNR by Gender and AUC",
+       x = "Machine Learning Algorithm",
+       y = "False Positive Rate (FNR) / AUC (black bars)") +
+  
+  # Minimal theme and rotated x-axis labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(size = 10, face = "bold"))  # Adjust legend title size for aesthetics
+```
+```{r}
+ggplot(df_analysis, aes(x = algorithm, y = FPR, fill = gender)) +
+  # Bars for FPR by gender
+  geom_bar(stat = "identity", position = "dodge") +
+  
+  # Add bars for AUC
+  geom_bar(aes(x = algorithm, y = as.numeric(auc)), 
+           stat = "identity", fill = "black", alpha = 0.5, position = "dodge", width = 0.2) +
+  
+  # Facet based on imputation, scarcity intervention, and tuning
+  facet_grid(scarcity_intervention ~ imputation + tuning, scales = "fixed") +
+  
+  # Set y-axis limits from 0 to 1, and control tick breaks
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+  
+  # Change the labels for gender, algorithm names, tuning, and scarcity intervention
+  scale_fill_manual(values = c("Male" = "blue", "Female" = "red"), name = "Gender") +
+  
+  # Change x-axis labels
+  scale_x_discrete(labels = c("logistic_regression" = "Logistic Regression", "xgboost" = "XGBoost")) +
+  
+  # Change facet labels for tuning and scarcity interventions
+  scale_fill_discrete(name = "Gender") +
+  facet_grid(imputation ~ scarcity_intervention + tuning, 
+             labeller = labeller(scarcity_intervention = c(
+                                  "no_method" = "No scarcity intervention", 
+                                  "random_undersampling" = "Random under sampling"),
+                                 tuning = c("True" = "Tuned", "False" = "Not tuned"),
+                                 imputation = c("simple_imputation" = "Simple imputation", "random_forest_imputation" = "Random forest imputation"))) +
+  
+  # Labels and titles
+  labs(title = "Impact of Engineering Choices on FPR by Gender and AUC",
+       x = "Machine Learning Algorithm",
+       y = "False Positive Rate (FPR) / AUC (black bars)") +
+  
+  # Minimal theme and rotated x-axis labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(size = 10, face = "bold"))  # Adjust legend title size for aesthetics
+```
+
+```{r}
+ggplot(df_analysis, aes(x = algorithm, y = FPR, fill = gender)) +
+  # Bars for FPR by gender
+  geom_bar(stat = "identity", position = "dodge") +
+  
+  # Add bars for AUC
+  geom_bar(aes(x = algorithm, y = as.numeric(auc)), 
+           stat = "identity", fill = "black", alpha = 0.5, position = "dodge", width = 0.2) +
+  
+  # Facet based on imputation, scarcity intervention, and tuning
+  facet_grid(scarcity_intervention ~ imputation + tuning, scales = "fixed") +
+  
+  # Set y-axis limits from 0 to 1, and control tick breaks
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+  
+  # Change the labels for gender, algorithm names, tuning, and scarcity intervention
+  scale_fill_manual(values = c("Male" = "blue", "Female" = "red"), name = "Gender") +
+  
+  # Change x-axis labels
+  scale_x_discrete(labels = c("logistic_regression" = "Logistic Regression", "xgboost" = "XGBoost")) +
+  
+  # Change facet labels for tuning and scarcity interventions
+  scale_fill_discrete(name = "Gender") +
+  facet_grid(tuning ~ scarcity_intervention + imputation, 
+             labeller = labeller(scarcity_intervention = c(
+                                  "no_method" = "No scarcity intervention", 
+                                  "random_undersampling" = "Random under sampling"),
+                                 tuning = c("True" = "Tuned", "False" = "Not tuned"),
+                                 imputation = c("simple_imputation" = "Simple imputation", "random_forest_imputation" = "Random forest imputation"))) +
+  
+  # Labels and titles
+  labs(title = "Impact of Engineering Choices on FPR by Gender and AUC",
+       x = "Machine Learning Algorithm",
+       y = "False Positive Rate (FPR) / AUC (black bars)") +
+  
+  # Minimal theme and rotated x-axis labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(size = 10, face = "bold"))  # Adjust legend title size for aesthetics
+```
+
+```{r}
+odds_data <- init_data[,c(6:10, 1:5)]
+
+rownames(odds_data) <- NULL
+
+odds_data[,c(6:10)] <- lapply(odds_data[,c(6:10)], as.numeric)
+
+odds_data$odds_FPR <- odds_data$Male_FPR / odds_data$Female_FPR
+odds_data$odds_FNR <- odds_data$Male_FNR / odds_data$Female_FNR
+
+odds_data <- odds_data[ ,c(1:6,11:12)]
+```
+
+```{r}
+ggplot(odds_data, aes(x = algorithm, y = odds_FPR)) +
+  # Bars for FPR by gender
+  geom_bar(stat = "identity", position = "dodge", fill = "darkblue", alpha = 0.7) +
+  
+  # Add bars for AUC
+  geom_bar(aes(x = algorithm, y = as.numeric(auc)), 
+           stat = "identity", fill = "black", alpha = 0.7, position = "dodge", width = 0.2) +
+  
+  # Facet based on imputation, scarcity intervention, and tuning
+  facet_grid(scarcity_intervention ~ imputation + tuning, scales = "fixed") +
+  
+  # Set y-axis limits from 0 to 1, and control tick breaks
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+  
+  # Change x-axis labels
+  scale_x_discrete(labels = c("logistic_regression" = "Logistic Regression", "xgboost" = "XGBoost")) +
+  
+  facet_grid(imputation ~ scarcity_intervention + tuning, 
+             labeller = labeller(scarcity_intervention = c(
+                                  "no_method" = "No scarcity intervention", 
+                                  "random_undersampling" = "Random under sampling"),
+                                 tuning = c("True" = "Tuned", "False" = "Not tuned"),
+                                 imputation = c("simple_imputation" = "Simple imputation", "random_forest_imputation" = "Random forest imputation"))) +
+  
+  # Labels and titles
+  labs(title = "Impact of Engineering Choices on FPR by Odd Ratio between genders male/female",
+       x = "Machine Learning Algorithm",
+       y = "FPR odds ratio / AUC (black bars)") +
+  
+  # Minimal theme and rotated x-axis labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(size = 10, face = "bold"))  # Adjust legend title size for aesthetics
+```
+
+```{r}
+ggplot(odds_data, aes(x = algorithm, y = odds_FNR)) +
+  # Bars for FPR by gender
+  geom_bar(stat = "identity", position = "dodge", fill = "darkblue", alpha = 0.7) +
+  
+  # Add bars for AUC
+  geom_bar(aes(x = algorithm, y = as.numeric(auc)), 
+           stat = "identity", fill = "black", alpha = 0.7, position = "dodge", width = 0.2) +
+  
+  # Facet based on imputation, scarcity intervention, and tuning
+  facet_grid(scarcity_intervention ~ imputation + tuning, scales = "fixed") +
+  
+  # Set y-axis limits from 0 to 1, and control tick breaks
+  #scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.2)) +
+  
+  # Change x-axis labels
+  scale_x_discrete(labels = c("logistic_regression" = "Logistic Regression", "xgboost" = "XGBoost")) +
+  
+  facet_grid(imputation ~ scarcity_intervention + tuning, 
+             labeller = labeller(scarcity_intervention = c(
+                                  "no_method" = "No scarcity intervention", 
+                                  "random_undersampling" = "Random under sampling"),
+                                 tuning = c("True" = "Tuned", "False" = "Not tuned"),
+                                 imputation = c("simple_imputation" = "Simple imputation", "random_forest_imputation" = "Random forest imputation"))) +
+  
+  # Labels and titles
+  labs(title = "Impact of Engineering Choices on FNR by Odd Ratio between genders male/female",
+       x = "Machine Learning Algorithm",
+       y = "FNR odds ratio / AUC (black bars)") +
+  
+  # Minimal theme and rotated x-axis labels
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(size = 10, face = "bold"))  # Adjust legend title size for aesthetics
+```
+
+```{r}
+# Imputation
+imp1_female_FPR <- df_analysis[df_analysis$imputation == "simple_imputation" & df_analysis$gender == "Female",]$FPR
+imp1_male_FPR <- df_analysis[df_analysis$imputation == "simple_imputation" & df_analysis$gender == "Male",]$FPR
+
+imp2_female_FPR <- df_analysis[df_analysis$imputation == "random_forest_imputation" & df_analysis$gender == "Female",]$FPR
+imp2_male_FPR <- df_analysis[df_analysis$imputation == "random_forest_imputation" & df_analysis$gender == "Male",]$FPR
+
+imp_female <- mean(abs(imp1_female_FPR - imp2_female_FPR))
+imp_male <-mean(abs(imp1_male_FPR - imp2_male_FPR))
+
+# Algorithm
+alg1_female_FPR <- df_analysis[df_analysis$algorithm == "xgboost" & df_analysis$gender == "Female",]$FPR
+alg1_male_FPR <- df_analysis[df_analysis$algorithm == "xgboost" & df_analysis$gender == "Male",]$FPR
+
+alg2_female_FPR <- df_analysis[df_analysis$algorithm == "logistic_regression" & df_analysis$gender == "Female",]$FPR
+alg2_male_FPR <- df_analysis[df_analysis$algorithm == "logistic_regression" & df_analysis$gender == "Male",]$FPR
+
+alg_female <- mean(abs(alg1_female_FPR - alg2_female_FPR))
+alg_male <- mean(abs(alg1_male_FPR - alg2_male_FPR))
+
+# Scarcity intervention
+sca1_female_FPR <- df_analysis[df_analysis$scarcity_intervention == "no_method" & df_analysis$gender == "Female",]$FPR
+sca1_male_FPR <- df_analysis[df_analysis$scarcity_intervention == "no_method" & df_analysis$gender == "Male",]$FPR
+
+sca2_female_FPR <- df_analysis[df_analysis$scarcity_intervention == "random_undersampling" & df_analysis$gender == "Female",]$FPR
+sca2_male_FPR <- df_analysis[df_analysis$scarcity_intervention == "random_undersampling" & df_analysis$gender == "Male",]$FPR
+
+sca_female <- mean(abs(sca1_female_FPR - sca2_female_FPR))
+sca_male <- mean(abs(sca1_male_FPR - sca2_male_FPR))
+
+# Tuning
+tun1_female_FPR <- df_analysis[df_analysis$tuning == "False" & df_analysis$gender == "Female" & df_analysis$algorithm == "xgboost",]$FPR
+tun1_male_FPR <- df_analysis[df_analysis$tuning == "False" & df_analysis$gender == "Male" & df_analysis$algorithm == "xgboost",]$FPR
+
+tun2_female_FPR <- df_analysis[df_analysis$tuning == "True" & df_analysis$gender == "Female",]$FPR
+tun2_male_FPR <- df_analysis[df_analysis$tuning == "True" & df_analysis$gender == "Male",]$FPR
+
+tun_male <- mean(abs(tun1_female_FPR - tun2_female_FPR))
+tun_female <- mean(abs(tun1_male_FPR - tun2_male_FPR))
+
+# data frame
+df_comparison <- data_frame()
+
+```
+
+```{r}
+# Calculate differences for each engineering choice and gender
+
+# Imputation
+imp_female_diff <- mean(abs(df_analysis$FPR[df_analysis$imputation == "simple_imputation" & df_analysis$gender == "Female"] - 
+                            df_analysis$FPR[df_analysis$imputation == "random_forest_imputation" & df_analysis$gender == "Female"]))
+imp_male_diff <- mean(abs(df_analysis$FPR[df_analysis$imputation == "simple_imputation" & df_analysis$gender == "Male"] - 
+                          df_analysis$FPR[df_analysis$imputation == "random_forest_imputation" & df_analysis$gender == "Male"]))
+
+imp_female_diff_auc <- mean(abs(df_analysis$auc[df_analysis$imputation == "simple_imputation" & df_analysis$gender == "Female"] - 
+                            df_analysis$auc[df_analysis$imputation == "random_forest_imputation" & df_analysis$gender == "Female"]))
+imp_male_diff_auc <- mean(abs(df_analysis$auc[df_analysis$imputation == "simple_imputation" & df_analysis$gender == "Male"] - 
+                          df_analysis$auc[df_analysis$imputation == "random_forest_imputation" & df_analysis$gender == "Male"]))
+
+# Algorithm
+alg_female_diff <- mean(abs(df_analysis$FPR[df_analysis$algorithm == "logistic_regression" & df_analysis$gender == "Female"] - 
+                            df_analysis$FPR[df_analysis$algorithm == "xgboost" & df_analysis$gender == "Female"]))
+alg_male_diff <- mean(abs(df_analysis$FPR[df_analysis$algorithm == "logistic_regression" & df_analysis$gender == "Male"] - 
+                          df_analysis$FPR[df_analysis$algorithm == "xgboost" & df_analysis$gender == "Male"]))
+
+alg_female_diff_auc <- mean(abs(df_analysis$auc[df_analysis$algorithm == "logistic_regression" & df_analysis$gender == "Female"] - 
+                            df_analysis$auc[df_analysis$algorithm == "xgboost" & df_analysis$gender == "Female"]))
+alg_male_diff_auc <- mean(abs(df_analysis$auc[df_analysis$algorithm == "logistic_regression" & df_analysis$gender == "Male"] - 
+                          df_analysis$auc[df_analysis$algorithm == "xgboost" & df_analysis$gender == "Male"]))
+
+# Scarcity intervention
+scarcity_female_diff <- mean(abs(df_analysis$FPR[df_analysis$scarcity_intervention == "no_method" & df_analysis$gender == "Female"] - 
+                                 df_analysis$FPR[df_analysis$scarcity_intervention == "random_undersampling" & df_analysis$gender == "Female"]))
+scarcity_male_diff <- mean(abs(df_analysis$FPR[df_analysis$scarcity_intervention == "no_method" & df_analysis$gender == "Male"] - 
+                               df_analysis$FPR[df_analysis$scarcity_intervention == "random_undersampling" & df_analysis$gender == "Male"]))
+
+scarcity_female_diff_auc <- mean(abs(df_analysis$auc[df_analysis$scarcity_intervention == "no_method" & df_analysis$gender == "Female"] - 
+                                 df_analysis$auc[df_analysis$scarcity_intervention == "random_undersampling" & df_analysis$gender == "Female"]))
+scarcity_male_diff_auc <- mean(abs(df_analysis$auc[df_analysis$scarcity_intervention == "no_method" & df_analysis$gender == "Male"] - 
+                               df_analysis$auc[df_analysis$scarcity_intervention == "random_undersampling" & df_analysis$gender == "Male"]))
+
+# Tuning
+tuning_female_diff <- mean(abs(df_analysis$FPR[df_analysis$tuning == "True" & df_analysis$gender == "Female" & df_analysis$algorithm == "xgboost"] - 
+                               df_analysis$FPR[df_analysis$tuning == "False" & df_analysis$gender == "Female" & df_analysis$algorithm == "xgboost"]))
+tuning_male_diff <- mean(abs(df_analysis$FPR[df_analysis$tuning == "True" & df_analysis$gender == "Male" & df_analysis$algorithm == "xgboost"] - 
+                             df_analysis$FPR[df_analysis$tuning == "False" & df_analysis$gender == "Male" & df_analysis$algorithm == "xgboost"]))
+
+tuning_female_diff_auc <- mean(abs(df_analysis$auc[df_analysis$tuning == "True" & df_analysis$gender == "Female" & df_analysis$algorithm == "xgboost"] - 
+                               df_analysis$auc[df_analysis$tuning == "False" & df_analysis$gender == "Female" & df_analysis$algorithm == "xgboost"]))
+tuning_male_diff_auc <- mean(abs(df_analysis$auc[df_analysis$tuning == "True" & df_analysis$gender == "Male" & df_analysis$algorithm == "xgboost"] - 
+                             df_analysis$auc[df_analysis$tuning == "False" & df_analysis$gender == "Male" & df_analysis$algorithm == "xgboost"]))
+
+# Create a data frame to store the results
+df_comparison <- data.frame(
+  Engineering_Choice = rep(c("Imputation", "Algorithm", "Scarcity Intervention", "Tuning"), each = 2),
+  Gender = rep(c("Female", "Male"), times = 4),
+  FPR_Diff = c(imp_female_diff, imp_male_diff,
+               alg_female_diff, alg_male_diff,
+               scarcity_female_diff, scarcity_male_diff,
+               tuning_female_diff, tuning_male_diff),
+  AUC_Diff = c(imp_female_diff_auc, imp_male_diff_auc,
+               alg_female_diff_auc, alg_male_diff_auc,
+               scarcity_female_diff_auc, scarcity_male_diff_auc,
+               tuning_female_diff_auc, tuning_male_diff_auc)
+)
+
+# View the comparison data
+print(df_comparison)
+
+
+```
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# Reshape the data for easier plotting
+df_melt <- melt(df_comparison, id.vars = c("Engineering_Choice", "Gender"),
+                variable.name = "Metric", value.name = "Value")
+
+# Plot
+ggplot(df_melt, aes(x = Engineering_Choice, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  facet_wrap(~ Gender) +  # Create separate plots for Male and Female
+  scale_fill_manual(values = c("FPR_Diff" = "red", "AUC_Diff" = "black")) +
+  labs(title = "FPR and AUC Differences by Engineering Choice and Gender",
+       x = "Engineering Choice",
+       y = "Difference",
+       fill = "Metric") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+```
+```{r}
+ggplot(df_melt, aes(x = Engineering_Choice, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("FPR_Diff" = "red", "AUC_Diff" = "black")) +
+  labs(title = "FPR and AUC Differences by Engineering Choice and Gender",
+       x = "Engineering Choice",
+       y = "Difference",
+       fill = "Metric") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# Reshape the data for easier plotting
+df_melt <- melt(df_comparison, id.vars = c("Engineering_Choice", "Gender"),
+                variable.name = "Metric", value.name = "Value")
+
+# Create a new column to distinguish FPR for Female, FPR for Male, and AUC
+df_melt$Metric <- ifelse(df_melt$Metric == "FPR_Diff" & df_melt$Gender == "Female", "Female FPR",
+                         ifelse(df_melt$Metric == "FPR_Diff" & df_melt$Gender == "Male", "Male FPR", "AUC"))
+
+# Plot
+ggplot(df_melt, aes(x = Engineering_Choice, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("Female FPR" = "darkred", "Male FPR" = "darkblue", "AUC" = "black")) +
+  labs(title = "FPR and AUC Differences by Engineering Choice",
+       x = "Engineering Choice",
+       y = "Difference",
+       fill = "Metric") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+
+```
+

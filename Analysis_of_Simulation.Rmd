@@ -17,11 +17,20 @@ The script is an R Markdown document for analyzing simulated data with a focus o
 ## Load dataset
 ```{r}
 # set data
-data <- simulated_data
+data <- read.csv("balanced_non_linear.csv")
+# "scarce_non_linear.csv"
+# "balanced_non_linear.csv"
+# "balanced_linear.csv"
+# "scarce_linear.csv"
+
+data <- as.data.frame(data)
+data <- data[,2:12]
 
 # set necessary variables to factors
+data[,1] <- as.factor(data[,1])
 data[,2] <- as.factor(data[,2])
 data[,3] <- as.factor(data[,3])
+data[,4] <- as.factor(data[,4])
 data[,6] <- as.factor(data[,6])
 data[,7] <- as.factor(data[,7])
 data[,9] <- as.factor(data[,9])
@@ -77,7 +86,7 @@ Initializes key parameters including the choice of algorithm, whether model hype
 # - "svm"
 # - "xgboost"
 # - "adaboost"
-algorithm <- "xgboost"
+algorithm <- "random_forest"
 
 # Ensure the chosen algorithm is valid
 valid_algorithms <- c("linear_regression", "logistic_regression", "random_forest", "svm", "xgboost", "adaboost")
@@ -88,7 +97,7 @@ if (!algorithm %in% valid_algorithms) {
 # 1.2  Tuned model
 # Indicates whether the model's hyperparameters will be optimized.
 # If set to TRUE, hyperparameter tuning methods will be applied.
-tuned <- TRUE
+tuned <- F
 
 # 2. Threshold setting
 # Sets the decision boundary for classification.
@@ -256,7 +265,8 @@ if(missing_data == TRUE) {
 Splits the data into training (80%) and testing (20%) sets to allow model training and performance evaluation. The split is randomized but reproducible due to the set seed.
 ```{r}
 # set seed
-set.seed(123)
+set.seed(175)
+#172
 
 # set proportion of train/test split
 n <- nrow(data)
@@ -268,6 +278,16 @@ train_index <- sample(1:n, size = n_train)
 # obtain train and test set
 data_train <- data[train_index,]
 data_test <- data[-train_index,]
+
+# Check subpopulations
+table(data_test[data_test$gender == "Male" & data_test$ethnicity == "Majority" & data_test$disability == "Yes",]$crime)
+table(data_test[data_test$gender == "Male" & data_test$ethnicity == "Majority" & data_test$disability == "No",]$crime)
+table(data_test[data_test$gender == "Male" & data_test$ethnicity == "Minority" & data_test$disability == "Yes",]$crime)
+table(data_test[data_test$gender == "Male" & data_test$ethnicity == "Minority" & data_test$disability == "No",]$crime)
+table(data_test[data_test$gender == "Female" & data_test$ethnicity == "Majority" & data_test$disability == "Yes",]$crime)
+table(data_test[data_test$gender == "Female" & data_test$ethnicity == "Majority" & data_test$disability == "No",]$crime)
+table(data_test[data_test$gender == "Female" & data_test$ethnicity == "Minority" & data_test$disability == "Yes",]$crime)
+table(data_test[data_test$gender == "Female" & data_test$ethnicity == "Minority" & data_test$disability == "No",]$crime)
 ```
 
 ## Scarce outcome intervention
@@ -943,8 +963,8 @@ if (algorithm == "xgboost") {
     #max_depth_values <- c(3, 6, 9)
     #nrounds_values <- c(50, 100, 150)
     
-    eta_values <- c(0.01, 0.2)
-    max_depth_values <- c(3, 9)
+    eta_values <- c(0.01, 0.1, 0.2)
+    max_depth_values <- c(3, 6, 9)
     nrounds_values <- c(100)
     
     # Initialize result storage
@@ -1051,6 +1071,7 @@ if (algorithm == "xgboost") {
 ## Obtain binary crime classification for test and training data
 Converts the predicted probabilities into binary classifications based on the threshold. It then creates confusion matrices to compare the predictions against actual labels.
 ```{r}
+# Default threshold
   # convert training data probabilities into binary depending on threshold
   prediction_train <- ifelse(probabilities_train >= threshold, 1, 0)
   
@@ -1062,13 +1083,40 @@ Converts the predicted probabilities into binary classifications based on the th
   
   # confusion matrix of classification showing TP/FP and TN/FN for test data
   cm_test <- table(data_test$crime, prediction_test)
+  
+# Stringent Threshold
+    # obtain threshold value
+    threshold_stringent <- quantile(probabilities_train, 0.1)
+    
+    # predictions
+    prediction_test_stringent <- ifelse(probabilities_test >= threshold_stringent, 1, 0)
+    prediction_train_stringent <- ifelse(probabilities_train >= threshold_stringent, 1, 0)
+    
+    # confusion matrix
+    cm_train_stringent <- table(data_train$crime, prediction_train_stringent)
+    cm_test_stringent <- table(data_test$crime, prediction_test_stringent)
+    
+# Lenient threshold
+    # obtain threshold value
+    threshold_lenient <- quantile(probabilities_train, 0.9)
+    if(threshold_lenient == 1){
+      threshold_lenient <- quantile(probabilities_test, 0.95)
+    }
+    
+    # predictions
+    prediction_test_lenient <- ifelse(probabilities_test >= threshold_lenient, 1, 0)
+    prediction_train_lenient <- ifelse(probabilities_train >= threshold_lenient, 1, 0)
+    
+    # confusion matrix
+    cm_train_lenient <- table(data_train$crime, prediction_train_lenient)
+    cm_test_lenient <- table(data_test$crime, prediction_test_lenient)
 ```
 
 ## Inspect model efficiency (ROC & AUC)
 Evaluates the model’s performance using metrics like ROC-AUC, which measures the trade-off between true positive and false positive rates, and accuracy, which measures the proportion of correct predictions.
 ```{r}
 # obtain ROC
-roc_curve <- roc(data_test$crime, prediction_test)
+roc_curve <- roc(data_test$crime, probabilities_test)
 
 # obtain AUC
 auc_value <- auc(roc_curve)
@@ -1076,13 +1124,93 @@ auc_value <- auc(roc_curve)
 # Accuracy (training data)
 accuracy_train <- (cm_train[1,1] + cm_train[2,2]) / sum(cm_train)
 
+# Adjust cm_test
+if(dim(cm_test)[2] == 1){
+  expanded_cm_test <- matrix(0, nrow = 2, ncol = 2, dimnames = list(c("0", "1"), c("0", "1")))
+  expanded_cm_test[, "0"] <- cm_test
+  cm_test <- expanded_cm_test
+}
+
 # Accuracy (test data)
 accuracy_test <- (cm_test[1,1] + cm_test[2,2]) / sum(cm_test)
+
+# Extract values from the confusion matrix
+TN <- cm_test[1, 1]
+FP <- cm_test[1, 2]
+FN <- cm_test[2, 1]
+TP <- cm_test[2, 2]
+
+# Calculate Precision, Recall, and F1 score
+precision <- TP / (TP + FP)
+recall <- TP / (TP + FN)
+f1_score <- 2 * (precision * recall) / (precision + recall)
 
 # print output
 cat("### Model performance ###", "\nThe Area under the Curve is:", round(auc_value, 3), "\nAccuracy (training):",
     accuracy_train, "\nAccuracy (test):", accuracy_test)
 ```
+## AUC for subgroups
+```{r}
+# Function to calculate AUC with error handling
+calculate_auc_safe <- function(data, probabilities) {
+  tryCatch({
+    roc_curve <- roc(data$crime, probabilities)
+    auc(roc_curve)
+  }, error = function(e) {
+    NA  # Return NA if there's an error
+  })
+}
+
+# Male Majority non-disabled
+auc_value_m_maj_ndis <- calculate_auc_safe(
+  data_test[data_test$gender == "Male" & data_test$ethnicity == "Majority" & data_test$disability == "No",], 
+  probabilities_test[data_test$gender == "Male" & data_test$ethnicity == "Majority" & data_test$disability == "No"]
+)
+
+# Male Majority disabled
+auc_value_m_maj_dis <- calculate_auc_safe(
+  data_test[data_test$gender == "Male" & data_test$ethnicity == "Majority" & data_test$disability == "Yes",], 
+  probabilities_test[data_test$gender == "Male" & data_test$ethnicity == "Majority" & data_test$disability == "Yes"]
+)
+
+# Male Minority non-disabled
+auc_value_m_min_ndis <- calculate_auc_safe(
+  data_test[data_test$gender == "Male" & data_test$ethnicity == "Minority" & data_test$disability == "No",], 
+  probabilities_test[data_test$gender == "Male" & data_test$ethnicity == "Minority" & data_test$disability == "No"]
+)
+
+# Male Minority disabled
+auc_value_m_min_dis <- calculate_auc_safe(
+  data_test[data_test$gender == "Male" & data_test$ethnicity == "Minority" & data_test$disability == "Yes",], 
+  probabilities_test[data_test$gender == "Male" & data_test$ethnicity == "Minority" & data_test$disability == "Yes"]
+)
+
+# Female Majority non-disabled
+auc_value_f_maj_ndis <- calculate_auc_safe(
+  data_test[data_test$gender == "Female" & data_test$ethnicity == "Majority" & data_test$disability == "No",], 
+  probabilities_test[data_test$gender == "Female" & data_test$ethnicity == "Majority" & data_test$disability == "No"]
+)
+
+# Female Majority disabled
+auc_value_f_maj_dis <- calculate_auc_safe(
+  data_test[data_test$gender == "Female" & data_test$ethnicity == "Majority" & data_test$disability == "Yes",], 
+  probabilities_test[data_test$gender == "Female" & data_test$ethnicity == "Majority" & data_test$disability == "Yes"]
+)
+
+# Female Minority non-disabled
+auc_value_f_min_ndis <- calculate_auc_safe(
+  data_test[data_test$gender == "Female" & data_test$ethnicity == "Minority" & data_test$disability == "No",], 
+  probabilities_test[data_test$gender == "Female" & data_test$ethnicity == "Minority" & data_test$disability == "No"]
+)
+
+# Female Minority disabled
+auc_value_f_min_dis <- calculate_auc_safe(
+  data_test[data_test$gender == "Female" & data_test$ethnicity == "Minority" & data_test$disability == "Yes",], 
+  probabilities_test[data_test$gender == "Female" & data_test$ethnicity == "Minority" & data_test$disability == "Yes"]
+)
+
+```
+
 ## Store Best Model (if applicable)
 Stores key values of the best model, that can later be used for comparisons.
 ```{r}
@@ -1159,6 +1287,29 @@ proportion_favorable_benchmark_test <- sum(cm_test[,1]) / sum(cm_test)
 FPR_benchmark_test <- cm_test[1,2] / (cm_test[1,2] + cm_test[1,1])
 FNR_benchmark_test <- cm_test[2,1] / (cm_test[2,1] + cm_test[2,2])
 
+if(sum(cm_test[,2]) == 0){
+  FPR_benchmark_test <- 0
+  FNR_benchmark_test <- 1
+}
+
+if(ncol(cm_test_stringent) == 2) {
+  # Metrics for stringent threshold
+  FPR_stringent <- cm_test_stringent[1,2] / (cm_test_stringent[1,2] + cm_test_stringent[1,1])
+  FNR_stringent <- cm_test_stringent[2,1] / (cm_test_stringent[2,1] + cm_test_stringent[2,2])
+} else {
+  FPR_stringent <- 1
+  FNR_stringent <- 0
+}
+
+if(ncol(cm_test_lenient) == 2) {
+  # Metrics for lenient threshold
+  FPR_lenient <- cm_test_lenient[1,2] / (cm_test_lenient[1,2] + cm_test_lenient[1,1])
+  FNR_lenient <- cm_test_lenient[2,1] / (cm_test_lenient[2,1] + cm_test_lenient[2,2])
+} else {
+  FPR_lenient <- 0
+  FNR_lenient <- 1
+}
+
 # Output
 cat("### Benchmark fairness measures ###\n\n1.Training Data\n- Demographic Parity:",
     round(proportion_favorable_benchmark_train,3),
@@ -1177,37 +1328,66 @@ calculate_metrics <- function(cm, cm_benchmark) {
   proportion_favorable <- NA
   FPR <- NA
   FNR <- NA
-  
+  proportion_favorable_benchmark <- NA
+  FPR_benchmark <- NA
+  FNR_benchmark <- NA
+
   # Check if the confusion matrix has the expected dimensions (2x2)
   if (all(dim(cm) == c(2, 2))) {
     # Calculate Proportion of Favorable Outcome (Demographic Parity)
-    proportion_favorable <- sum(cm[,1]) / sum(cm)
+    proportion_favorable <- sum(cm[, 1]) / sum(cm)
     
     # Calculate False Positive Rate (FPR)
-    if ((cm[1,2] + cm[1,1]) > 0) {
-      FPR <- cm[1,2] / (cm[1,2] + cm[1,1])
+    if (sum(cm) == sum(cm[,1])) {
+      FPR <- 0  # All predictions are negative
+      FNR <- 1
+    } else if ((cm[1, 2] + cm[1, 1]) > 0) {
+      FPR <- cm[1, 2] / (cm[1, 2] + cm[1, 1])
     }
-    
+
     # Calculate False Negative Rate (FNR)
-    if ((cm[2,1] + cm[2,2]) > 0) {
-      FNR <- cm[2,1] / (cm[2,1] + cm[2,2])
+    if (sum(cm[, 1]) == 0) {
+      FNR <- 0  # All predictions are positive
+      FPR <- 1
+    } else if ((cm[2, 1] + cm[2, 2]) > 0) {
+      FNR <- cm[2, 1] / (cm[2, 1] + cm[2, 2])
     }
+  } else {
+    FPR <- 0  # All predictions are negative
+      FNR <- 1
   }
   
-  # Calculate Benchmark metrics
-  proportion_favorable_benchmark <- sum(cm_benchmark[,1]) / sum(cm_benchmark)
-  FPR_benchmark <- cm_benchmark[1,2] / (cm_benchmark[1,2] + cm_benchmark[1,1])
-  FNR_benchmark <- cm_benchmark[2,1] / (cm_benchmark[2,1] + cm_benchmark[2,2])
+
+  if (all(dim(cm_benchmark) == c(2, 2))) {
+    # Calculate Benchmark metrics
+    proportion_favorable_benchmark <- sum(cm_benchmark[, 1]) / sum(cm_benchmark)
+
+    if (sum(cm_benchmark[1, ]) == 0) {
+      FPR_benchmark <- 0  # All benchmark predictions are negative
+    } else {
+      FPR_benchmark <- cm_benchmark[1, 2] / (cm_benchmark[1, 2] + cm_benchmark[1, 1])
+    }
+
+    if (sum(cm_benchmark[, 2]) == 0) {
+      FNR_benchmark <- 0  # All benchmark predictions are positive
+    } else {
+      FNR_benchmark <- cm_benchmark[2, 1] / (cm_benchmark[2, 1] + cm_benchmark[2, 2])
+    }
+  }
 
   # Calculate ratios relative to the benchmark
   proportion_favorable_ratio <- if (!is.na(proportion_favorable)) proportion_favorable / proportion_favorable_benchmark else NA
-  FPR_ratio <- if (!is.na(FPR)) FPR / FPR_benchmark else NA
-  FNR_ratio <- if (!is.na(FNR)) FNR / FNR_benchmark else NA
-  
-  return(list(proportion_favorable = proportion_favorable, proportion_favorable_ratio = proportion_favorable_ratio, 
-              FPR = FPR, FPR_ratio = FPR_ratio, 
-              FNR = FNR, FNR_ratio = FNR_ratio))
+  FPR_ratio <- if (!is.na(FPR) && !is.na(FPR_benchmark) && FPR_benchmark != 0) FPR / FPR_benchmark else NA
+  FNR_ratio <- if (!is.na(FNR) && !is.na(FNR_benchmark) && FNR_benchmark != 0) FNR / FNR_benchmark else NA
+
+  return(list(proportion_favorable = proportion_favorable, 
+              proportion_favorable_ratio = proportion_favorable_ratio,
+              FPR = FPR, 
+              FPR_ratio = FPR_ratio, 
+              FNR = FNR, 
+              FNR_ratio = FNR_ratio))
 }
+
 ```
 
 ## Calculation and display of the three fairness metrics for single senstive attribute comparisons
@@ -1407,19 +1587,85 @@ cat("2. Lowest FNR (least desirable):", extremes_test$most_disadvantaged$FNR$sub
 cat("3. Lowest Proportion of Favorable Outcome (Demographic Parity):", extremes_test$most_disadvantaged$Demographic_Parity$subpop, 
     "(Value:", extremes_test$most_disadvantaged$Demographic_Parity$value, ")\n")
 ```
+
+## Fine grained subpopulations for stringent and lenient threshold
+```{r}
+# Lenient threshold
+  # Create a list to store metrics for all subpopulations
+  subpop_metrics_test_lenient <- list()
+  
+  # Iterate over combinations of Gender, Ethnicity, and Disability
+  for (gender in c("Male", "Female")) {
+    for (ethnicity in c("Minority", "Majority")) {
+      for (disability in c("Yes", "No")) {
+        subpop <- paste(gender, ethnicity, disability, sep = "_")
+        
+        # Index selection
+        indices_test <- which(data_test$gender == gender & data_test$ethnicity == ethnicity & data_test$disability == disability)
+        
+        # Confusion matrix
+        cm_test_subpop <- table(data_test[indices_test,]$crime, prediction_test_lenient[indices_test])
+        
+        # Calculate metrics
+        metrics_test <- calculate_metrics(cm_test_subpop, cm_test_lenient)
+        
+        # Store metrics
+        subpop_metrics_test_lenient[[subpop]] <- metrics_test
+      }
+    }
+  }
+
+# Stringent threshold
+  # Create a list to store metrics for all subpopulations
+  subpop_metrics_test_stringent <- list()
+  
+  # Iterate over combinations of Gender, Ethnicity, and Disability
+  for (gender in c("Male", "Female")) {
+    for (ethnicity in c("Minority", "Majority")) {
+      for (disability in c("Yes", "No")) {
+        subpop <- paste(gender, ethnicity, disability, sep = "_")
+        
+        # Index selection
+        indices_test <- which(data_test$gender == gender & data_test$ethnicity == ethnicity & data_test$disability == disability)
+        
+        # Confusion matrix
+        cm_test_subpop <- table(data_test[indices_test,]$crime, prediction_test_stringent[indices_test])
+        
+        # Calculate metrics
+        metrics_test <- calculate_metrics(cm_test_subpop, cm_test_stringent)
+        
+        # Store metrics
+        subpop_metrics_test_stringent[[subpop]] <- metrics_test
+      }
+    }
+  }
+```
+
 # Check 80%-Rule
 ```{r}
 # FPR
 # If this ratio is greater than 1.25, it indicates potential bias against the disadvantaged group.
 FPR_80 <- extremes_test$most_disadvantaged$FPR$value / extremes_test$most_privileged$FPR$value
 
+if(is.null(extremes_test$most_privileged$FPR$value)){
+  FPR_80 <- 0
+}
+
 # FNR
 # Again, if this ratio exceeds 1.25, it suggests potential bias.
 FNR_80 <- extremes_test$most_privileged$FNR$value / extremes_test$most_disadvantaged$FNR$value
 
+if(is.null(extremes_test$most_disadvantaged$FNR$value)){
+  FNR_80 <- 0
+}
+
 # Demographic Parity
 # If this ratio is less than 0.8, it indicates potential adverse impact against the disadvantaged group.
 parity_80 <- extremes_test$most_disadvantaged$Demographic_Parity$value / extremes_test$most_privileged$Demographic_Parity$value
+
+if(is.null(extremes_test$most_privileged$Demographic_Parity$value)){
+  parity_80 <- 0
+}
 
 # Print results
 cat("**80% RULE**\n", "1. FPR ratio:", FPR_80, "\n")
@@ -1460,10 +1706,34 @@ extracted_metrics <- list(
   accuracy_test = accuracy_test,
   accuracy_train = accuracy_train,
   
+  precision = precision,
+  recall = recall,
+  f1_score = f1_score,
+  
+  # AUC values for subgroups
+  AUC_male_majority_nondisabled = auc_value_m_maj_ndis,
+  AUC_male_majority_disabled = auc_value_m_maj_dis,
+  AUC_male_minority_nondisabled = auc_value_m_min_ndis,
+  AUC_male_minority_disabled = auc_value_m_min_dis,
+  AUC_female_majority_nondisabled = auc_value_f_maj_ndis,
+  AUC_female_majority_disabled = auc_value_f_maj_dis,
+  AUC_female_minority_nondisabled = auc_value_f_min_ndis,
+  AUC_female_minority_disabled = auc_value_f_min_dis,
+  
   # Benchmark metrics
   proportion_favorable_benchmark_test = proportion_favorable_benchmark_test,
   FPR_benchmark_test = FPR_benchmark_test,
   FNR_benchmark_test = FNR_benchmark_test,
+  FPR_train = FPR_benchmark_train,
+  FNR_train = FNR_benchmark_train,
+  
+  # Benchmark metrics for lenient threshold
+  FPR_lenient = FPR_lenient,
+  FNR_lenient = FNR_lenient,
+  
+  # Benchmark metrics for stringent threshold
+  FPR_stringent = FPR_stringent,
+  FNR_stringent = FNR_stringent,
   
   # Single attribute comparison
   Male_proportion_favorable = metrics_test_male$proportion_favorable,
@@ -1491,69 +1761,168 @@ extracted_metrics <- list(
   Majority_FNR = metrics_test_majority$FNR,
   
   # Obtained metrics from subpopulations
-  # Male_Minority_Yes
-  Male_Minority_Yes_proportion_favorable = subpop_metrics_test$Male_Minority_Yes$proportion_favorable,
-  Male_Minority_Yes_proportion_favorable_ratio = subpop_metrics_test$Male_Minority_Yes$proportion_favorable_ratio,
-  Male_Minority_Yes_FPR = subpop_metrics_test$Male_Minority_Yes$FPR,
-  Male_Minority_Yes_FPR_ratio = subpop_metrics_test$Male_Minority_Yes$FPR_ratio,
-  Male_Minority_Yes_FNR = subpop_metrics_test$Male_Minority_Yes$FNR,
-  Male_Minority_Yes_FNR_ratio = subpop_metrics_test$Male_Minority_Yes$FNR_ratio,
+    # Male_Minority_Yes
+    Male_Minority_Yes_proportion_favorable = subpop_metrics_test$Male_Minority_Yes$proportion_favorable,
+    Male_Minority_Yes_proportion_favorable_ratio = subpop_metrics_test$Male_Minority_Yes$proportion_favorable_ratio,
+    Male_Minority_Yes_FPR = subpop_metrics_test$Male_Minority_Yes$FPR,
+    Male_Minority_Yes_FPR_ratio = subpop_metrics_test$Male_Minority_Yes$FPR_ratio,
+    Male_Minority_Yes_FNR = subpop_metrics_test$Male_Minority_Yes$FNR,
+    Male_Minority_Yes_FNR_ratio = subpop_metrics_test$Male_Minority_Yes$FNR_ratio,
+    
+    # Male_Minority_No
+    Male_Minority_No_proportion_favorable = subpop_metrics_test$Male_Minority_No$proportion_favorable,
+    Male_Minority_No_proportion_favorable_ratio = subpop_metrics_test$Male_Minority_No$proportion_favorable_ratio,
+    Male_Minority_No_FPR = subpop_metrics_test$Male_Minority_No$FPR,
+    Male_Minority_No_FPR_ratio = subpop_metrics_test$Male_Minority_No$FPR_ratio,
+    Male_Minority_No_FNR = subpop_metrics_test$Male_Minority_No$FNR,
+    Male_Minority_No_FNR_ratio = subpop_metrics_test$Male_Minority_No$FNR_ratio,
+    
+    # Male_Majority_Yes
+    Male_Majority_Yes_proportion_favorable = subpop_metrics_test$Male_Majority_Yes$proportion_favorable,
+    Male_Majority_Yes_proportion_favorable_ratio = subpop_metrics_test$Male_Majority_Yes$proportion_favorable_ratio,
+    Male_Majority_Yes_FPR = subpop_metrics_test$Male_Majority_Yes$FPR,
+    Male_Majority_Yes_FPR_ratio = subpop_metrics_test$Male_Majority_Yes$FPR_ratio,
+    Male_Majority_Yes_FNR = subpop_metrics_test$Male_Majority_Yes$FNR,
+    Male_Majority_Yes_FNR_ratio = subpop_metrics_test$Male_Majority_Yes$FNR_ratio,
+    
+    # Male_Majority_No
+    Male_Majority_No_proportion_favorable = subpop_metrics_test$Male_Majority_No$proportion_favorable,
+    Male_Majority_No_proportion_favorable_ratio = subpop_metrics_test$Male_Majority_No$proportion_favorable_ratio,
+    Male_Majority_No_FPR = subpop_metrics_test$Male_Majority_No$FPR,
+    Male_Majority_No_FPR_ratio = subpop_metrics_test$Male_Majority_No$FPR_ratio,
+    Male_Majority_No_FNR = subpop_metrics_test$Male_Majority_No$FNR,
+    Male_Majority_No_FNR_ratio = subpop_metrics_test$Male_Majority_No$FNR_ratio,
+    
+    # Female_Minority_Yes
+    Female_Minority_Yes_proportion_favorable = subpop_metrics_test$Female_Minority_Yes$proportion_favorable,
+    Female_Minority_Yes_proportion_favorable_ratio = subpop_metrics_test$Female_Minority_Yes$proportion_favorable_ratio,
+    Female_Minority_Yes_FPR = subpop_metrics_test$Female_Minority_Yes$FPR,
+    Female_Minority_Yes_FPR_ratio = subpop_metrics_test$Female_Minority_Yes$FPR_ratio,
+    Female_Minority_Yes_FNR = subpop_metrics_test$Female_Minority_Yes$FNR,
+    Female_Minority_Yes_FNR_ratio = subpop_metrics_test$Female_Minority_Yes$FNR_ratio,
+    
+    # Female_Minority_No
+    Female_Minority_No_proportion_favorable = subpop_metrics_test$Female_Minority_No$proportion_favorable,
+    Female_Minority_No_proportion_favorable_ratio = subpop_metrics_test$Female_Minority_No$proportion_favorable_ratio,
+    Female_Minority_No_FPR = subpop_metrics_test$Female_Minority_No$FPR,
+    Female_Minority_No_FPR_ratio = subpop_metrics_test$Female_Minority_No$FPR_ratio,
+    Female_Minority_No_FNR = subpop_metrics_test$Female_Minority_No$FNR,
+    Female_Minority_No_FNR_ratio = subpop_metrics_test$Female_Minority_No$FNR_ratio,
+    
+    # Female_Majority_Yes
+    Female_Majority_Yes_proportion_favorable = subpop_metrics_test$Female_Majority_Yes$proportion_favorable,
+    Female_Majority_Yes_proportion_favorable_ratio = subpop_metrics_test$Female_Majority_Yes$proportion_favorable_ratio,
+    Female_Majority_Yes_FPR = subpop_metrics_test$Female_Majority_Yes$FPR,
+    Female_Majority_Yes_FPR_ratio = subpop_metrics_test$Female_Majority_Yes$FPR_ratio,
+    Female_Majority_Yes_FNR = subpop_metrics_test$Female_Majority_Yes$FNR,
+    Female_Majority_Yes_FNR_ratio = subpop_metrics_test$Female_Majority_Yes$FNR_ratio,
+    
+    # Female_Majority_No
+    Female_Majority_No_proportion_favorable = subpop_metrics_test$Female_Majority_No$proportion_favorable,
+    Female_Majority_No_proportion_favorable_ratio = subpop_metrics_test$Female_Majority_No$proportion_favorable_ratio,
+    Female_Majority_No_FPR = subpop_metrics_test$Female_Majority_No$FPR,
+    Female_Majority_No_FPR_ratio = subpop_metrics_test$Female_Majority_No$FPR_ratio,
+    Female_Majority_No_FNR = subpop_metrics_test$Female_Majority_No$FNR,
+    Female_Majority_No_FNR_ratio = subpop_metrics_test$Female_Majority_No$FNR_ratio,
   
-  # Male_Minority_No
-  Male_Minority_No_proportion_favorable = subpop_metrics_test$Male_Minority_No$proportion_favorable,
-  Male_Minority_No_proportion_favorable_ratio = subpop_metrics_test$Male_Minority_No$proportion_favorable_ratio,
-  Male_Minority_No_FPR = subpop_metrics_test$Male_Minority_No$FPR,
-  Male_Minority_No_FPR_ratio = subpop_metrics_test$Male_Minority_No$FPR_ratio,
-  Male_Minority_No_FNR = subpop_metrics_test$Male_Minority_No$FNR,
-  Male_Minority_No_FNR_ratio = subpop_metrics_test$Male_Minority_No$FNR_ratio,
+  # Metrics from stringent threshold
+      # Male_Minority_Yes
+    Male_Minority_Yes_FPR_stringent = subpop_metrics_test_stringent$Male_Minority_Yes$FPR,
+    Male_Minority_Yes_FNR_stringent = subpop_metrics_test_stringent$Male_Minority_Yes$FNR,
+    
+    # Male_Minority_No
+    Male_Minority_No_FPR_stringent = subpop_metrics_test_stringent$Male_Minority_No$FPR,
+    Male_Minority_No_FNR_stringent = subpop_metrics_test_stringent$Male_Minority_No$FNR,
+    
+    # Male_Majority_Yes
+    Male_Majority_Yes_FPR_stringent = subpop_metrics_test_stringent$Male_Majority_Yes$FPR,
+    Male_Majority_Yes_FNR_stringent = subpop_metrics_test_stringent$Male_Majority_Yes$FNR,
+    
+    # Male_Majority_No
+    Male_Majority_No_FPR_stringent = subpop_metrics_test_stringent$Male_Majority_No$FPR,
+    Male_Majority_No_FNR_stringent = subpop_metrics_test_stringent$Male_Majority_No$FNR,
+    
+    # Female_Minority_Yes
+    Female_Minority_Yes_FPR_stringent = subpop_metrics_test_stringent$Female_Minority_Yes$FPR,
+    Female_Minority_Yes_FNR_stringent = subpop_metrics_test_stringent$Female_Minority_Yes$FNR,
+    
+    # Female_Minority_No
+    Female_Minority_No_FPR_stringent = subpop_metrics_test_stringent$Female_Minority_No$FPR,
+    Female_Minority_No_FNR_stringent = subpop_metrics_test_stringent$Female_Minority_No$FNR,
+    
+    # Female_Majority_Yes
+    Female_Majority_Yes_FPR_stringent = subpop_metrics_test_stringent$Female_Majority_Yes$FPR,
+    Female_Majority_Yes_FNR_stringent = subpop_metrics_test_stringent$Female_Majority_Yes$FNR,
+    
+    # Female_Majority_No
+    Female_Majority_No_FPR_stringent = subpop_metrics_test_stringent$Female_Majority_No$FPR,
+    Female_Majority_No_FNR_stringent = subpop_metrics_test_stringent$Female_Majority_No$FNR,
+
+    # Metrics from lenient threshold
+      # Male_Minority_Yes
+    Male_Minority_Yes_FPR_lenient = subpop_metrics_test_lenient$Male_Minority_Yes$FPR,
+    Male_Minority_Yes_FNR_lenient = subpop_metrics_test_lenient$Male_Minority_Yes$FNR,
+    
+    # Male_Minority_No
+    Male_Minority_No_FPR_lenient = subpop_metrics_test_lenient$Male_Minority_No$FPR,
+    Male_Minority_No_FNR_lenient = subpop_metrics_test_lenient$Male_Minority_No$FNR,
+    
+    # Male_Majority_Yes
+    Male_Majority_Yes_FPR_lenient = subpop_metrics_test_lenient$Male_Majority_Yes$FPR,
+    Male_Majority_Yes_FNR_lenient = subpop_metrics_test_lenient$Male_Majority_Yes$FNR,
+    
+    # Male_Majority_No
+    Male_Majority_No_FPR_lenient = subpop_metrics_test_lenient$Male_Majority_No$FPR,
+    Male_Majority_No_FNR_lenient = subpop_metrics_test_lenient$Male_Majority_No$FNR,
+    
+    # Female_Minority_Yes
+    Female_Minority_Yes_FPR_lenient = subpop_metrics_test_lenient$Female_Minority_Yes$FPR,
+    Female_Minority_Yes_FNR_lenient = subpop_metrics_test_lenient$Female_Minority_Yes$FNR,
+    
+    # Female_Minority_No
+    Female_Minority_No_FPR_lenient = subpop_metrics_test_lenient$Female_Minority_No$FPR,
+    Female_Minority_No_FNR_lenient = subpop_metrics_test_lenient$Female_Minority_No$FNR,
+    
+    # Female_Majority_Yes
+    Female_Majority_Yes_FPR_lenient = subpop_metrics_test_lenient$Female_Majority_Yes$FPR,
+    Female_Majority_Yes_FNR_lenient = subpop_metrics_test_lenient$Female_Majority_Yes$FNR,
+    
+    # Female_Majority_No
+    Female_Majority_No_FPR_lenient = subpop_metrics_test_lenient$Female_Majority_No$FPR,
+    Female_Majority_No_FNR_lenient = subpop_metrics_test_lenient$Female_Majority_No$FNR,
   
-  # Male_Majority_Yes
-  Male_Majority_Yes_proportion_favorable = subpop_metrics_test$Male_Majority_Yes$proportion_favorable,
-  Male_Majority_Yes_proportion_favorable_ratio = subpop_metrics_test$Male_Majority_Yes$proportion_favorable_ratio,
-  Male_Majority_Yes_FPR = subpop_metrics_test$Male_Majority_Yes$FPR,
-  Male_Majority_Yes_FPR_ratio = subpop_metrics_test$Male_Majority_Yes$FPR_ratio,
-  Male_Majority_Yes_FNR = subpop_metrics_test$Male_Majority_Yes$FNR,
-  Male_Majority_Yes_FNR_ratio = subpop_metrics_test$Male_Majority_Yes$FNR_ratio,
-  
-  # Male_Majority_No
-  Male_Majority_No_proportion_favorable = subpop_metrics_test$Male_Majority_No$proportion_favorable,
-  Male_Majority_No_proportion_favorable_ratio = subpop_metrics_test$Male_Majority_No$proportion_favorable_ratio,
-  Male_Majority_No_FPR = subpop_metrics_test$Male_Majority_No$FPR,
-  Male_Majority_No_FPR_ratio = subpop_metrics_test$Male_Majority_No$FPR_ratio,
-  Male_Majority_No_FNR = subpop_metrics_test$Male_Majority_No$FNR,
-  Male_Majority_No_FNR_ratio = subpop_metrics_test$Male_Majority_No$FNR_ratio,
-  
-  # Female_Minority_Yes
-  Female_Minority_Yes_proportion_favorable = subpop_metrics_test$Female_Minority_Yes$proportion_favorable,
-  Female_Minority_Yes_proportion_favorable_ratio = subpop_metrics_test$Female_Minority_Yes$proportion_favorable_ratio,
-  Female_Minority_Yes_FPR = subpop_metrics_test$Female_Minority_Yes$FPR,
-  Female_Minority_Yes_FPR_ratio = subpop_metrics_test$Female_Minority_Yes$FPR_ratio,
-  Female_Minority_Yes_FNR = subpop_metrics_test$Female_Minority_Yes$FNR,
-  Female_Minority_Yes_FNR_ratio = subpop_metrics_test$Female_Minority_Yes$FNR_ratio,
-  
-  # Female_Minority_No
-  Female_Minority_No_proportion_favorable = subpop_metrics_test$Female_Minority_No$proportion_favorable,
-  Female_Minority_No_proportion_favorable_ratio = subpop_metrics_test$Female_Minority_No$proportion_favorable_ratio,
-  Female_Minority_No_FPR = subpop_metrics_test$Female_Minority_No$FPR,
-  Female_Minority_No_FPR_ratio = subpop_metrics_test$Female_Minority_No$FPR_ratio,
-  Female_Minority_No_FNR = subpop_metrics_test$Female_Minority_No$FNR,
-  Female_Minority_No_FNR_ratio = subpop_metrics_test$Female_Minority_No$FNR_ratio,
-  
-  # Female_Majority_Yes
-  Female_Majority_Yes_proportion_favorable = subpop_metrics_test$Female_Majority_Yes$proportion_favorable,
-  Female_Majority_Yes_proportion_favorable_ratio = subpop_metrics_test$Female_Majority_Yes$proportion_favorable_ratio,
-  Female_Majority_Yes_FPR = subpop_metrics_test$Female_Majority_Yes$FPR,
-  Female_Majority_Yes_FPR_ratio = subpop_metrics_test$Female_Majority_Yes$FPR_ratio,
-  Female_Majority_Yes_FNR = subpop_metrics_test$Female_Majority_Yes$FNR,
-  Female_Majority_Yes_FNR_ratio = subpop_metrics_test$Female_Majority_Yes$FNR_ratio,
-  
-  # Female_Majority_No
-  Female_Majority_No_proportion_favorable = subpop_metrics_test$Female_Majority_No$proportion_favorable,
-  Female_Majority_No_proportion_favorable_ratio = subpop_metrics_test$Female_Majority_No$proportion_favorable_ratio,
-  Female_Majority_No_FPR = subpop_metrics_test$Female_Majority_No$FPR,
-  Female_Majority_No_FPR_ratio = subpop_metrics_test$Female_Majority_No$FPR_ratio,
-  Female_Majority_No_FNR = subpop_metrics_test$Female_Majority_No$FNR,
-  Female_Majority_No_FNR_ratio = subpop_metrics_test$Female_Majority_No$FNR_ratio
+  # Subpopulation metrics for training data (measure of overfit)
+    # Male_Minority_Yes
+    Male_Minority_Yes_FPR_train = subpop_metrics_train$Male_Minority_Yes$FPR,
+    Male_Minority_Yes_FNR_train = subpop_metrics_train$Male_Minority_Yes$FNR,
+    
+    # Male_Minority_No
+    Male_Minority_No_FPR_train = subpop_metrics_train$Male_Minority_No$FPR,
+    Male_Minority_No_FNR_train = subpop_metrics_train$Male_Minority_No$FNR,
+    
+    # Male_Majority_Yes
+    Male_Majority_Yes_FPR_train = subpop_metrics_train$Male_Majority_Yes$FPR,
+    Male_Majority_Yes_FNR_train = subpop_metrics_train$Male_Majority_Yes$FNR,
+    
+    # Male_Majority_No
+    Male_Majority_No_FPR_train = subpop_metrics_train$Male_Majority_No$FPR,
+    Male_Majority_No_FNR_train = subpop_metrics_train$Male_Majority_No$FNR,
+    
+    # Female_Minority_Yes
+    Female_Minority_Yes_FPR_train = subpop_metrics_train$Female_Minority_Yes$FPR,
+    Female_Minority_Yes_FNR_train = subpop_metrics_train$Female_Minority_Yes$FNR,
+    
+    # Female_Minority_No
+    Female_Minority_No_FPR_train = subpop_metrics_train$Female_Minority_No$FPR,
+    Female_Minority_No_FNR_train = subpop_metrics_train$Female_Minority_No$FNR,
+    
+    # Female_Majority_Yes
+    Female_Majority_Yes_FPR_train = subpop_metrics_train$Female_Majority_Yes$FPR,
+    Female_Majority_Yes_FNR_train = subpop_metrics_train$Female_Majority_Yes$FNR,
+    
+    # Female_Majority_No
+    Female_Majority_No_FPR_train = subpop_metrics_train$Female_Majority_No$FPR,
+    Female_Majority_No_FNR_train = subpop_metrics_train$Female_Majority_No$FNR
 )
 
 if(initialize_df == TRUE) {
@@ -1574,5 +1943,7 @@ column_name <- paste(
 
 # Add the values from the list to the new column in the data frame
 df_metrics[[column_name]] <- unlist(extracted_metrics)
+
+#write.csv(df_metrics, file = "AnalysisBalanced_Nonlinear.csv")
 ```
 

@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Distribution of variables
 ```{r}
 library(ggplot2)
+library(gridExtra)
 
 # Plot distribution of income
 ggplot(simulated_data, aes(x = income)) +
@@ -121,6 +122,108 @@ ggplot(crime_summary, aes(x = education, y = gender, fill = avg_crime)) +
   scale_fill_gradient(low = "white", high = "red") +
   theme_minimal() +
   ggtitle("Heatmap of Crime Probability by Education and Gender")
+
+```
+```{r}
+plotting_data <- simulated_data
+plotting_data$probs <- crime_prob
+
+plot1 <- ggplot(plotting_data, aes(x = income, y = probs, colour = as.factor(crime))) +
+  geom_point(size = 0.25, alpha = 0.7) +
+  geom_smooth(colour = "darkblue") +
+  xlab("Income") +
+  ylab("Probability") +
+  scale_color_manual(values = c("darkcyan", "brown"),  
+                     labels = c("No Fraud", "Fraud")) + 
+  labs(color = "Fraud Committed") + 
+  guides(colour = guide_legend(override.aes = list(size = 3))) +
+  theme_bw()
+
+plot1
+
+plot2 <- ggplot(plotting_data, aes(x = education, y = probs)) +
+  geom_boxplot(fill = "grey") +
+  xlab("Education Level") +
+  ylab("Probability") +
+  theme_bw()  +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+plot2
+
+plot3 <- ggplot(plotting_data, aes(x = new_var2, y = probs, colour = as.factor(crime))) +
+  geom_point(size = 0.25, alpha = 0.5) +
+  geom_smooth(colour = "darkblue") +
+  ylab("Probability") + 
+  xlab("2nd Generated Variable") +
+  scale_color_manual(values = c("darkcyan", "brown"),
+                     labels = c("No Fraud", "Fraud")) +
+  theme_bw()+
+  theme(legend.position = "none")
+
+plot3
+
+plot4 <- ggplot(plotting_data, aes(x = new_var4, y = probs, colour = as.factor(crime))) +
+  geom_point(size = 0.25, alpha = 0.5) +
+  geom_smooth(colour = "darkblue") +
+  ylab("Probability") +
+  xlab("4th Generated Variable") +
+  scale_color_manual(values = c("darkcyan", "brown"),
+                     labels = c("No Fraud", "Fraud")) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+plot4
+
+plot5 <- ggplot(plotting_data, aes(x = disability, y = probs)) +
+  geom_boxplot(fill = "grey") +
+  ylab("Probability") +
+  xlab("Disability") +
+  theme_bw()
+
+plot5
+
+plot6 <- ggplot(plotting_data, aes(x = as.factor(new_var), y = probs)) +
+  geom_boxplot(fill = "grey") +
+  ylab("Probability") +
+  xlab("1st Generated Variable") +
+  theme_bw()
+plot6
+
+plot7 <- ggplot(plotting_data, aes(x = as.factor(new_var3), y = probs)) +
+  geom_boxplot(fill = "grey") +
+  ylab("Probability") + 
+  xlab("3rd Generated Variable") +
+  theme_bw()
+plot7
+```
+# Overview plots
+```{r}
+library(patchwork)
+
+# Combine the plots in a grid (3 columns)
+combined_plot <- (plot3 + plot4) / (plot2 + plot5 + plot6 + plot7) / plot1
+
+combined_plot <- plot1 / (plot2 + plot5) / (plot6 + plot7) / (plot3 + plot4)
+
+# Display the combined plot
+combined_plot
+
+library(patchwork)
+
+combined_plot <- plot1 / 
+                 (plot2 + plot5) / 
+                 (plot6 + plot7) + 
+                 (plot3 + plot4) + 
+                 plot_layout(heights = c(1.5, 1, 1))
+
+# Display the combined plot
+#combined_plot
+
+lay = rbind(c(1,1,1,1,1,1),
+            c(2,2,2,2,3,3),
+            c(4,4,4,5,5,5),
+            c(6,6,6,7,7,7))
+
+dashboard <- grid.arrange(plot1, plot2, plot5, plot6, plot7, plot3, plot4, layout_matrix = lay)
 
 ```
 

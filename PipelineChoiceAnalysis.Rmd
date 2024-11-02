@@ -1,0 +1,892 @@
+---
+title: "PipelineChoiceAnalysis"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+init_data <- read.csv("AnalysisScarce_linear.csv")
+# "AnalysisScarce_linear.csv"
+# "AnalysisBalanced_linear.csv"
+# "AnalysisScarce_Nonlinear.csv"
+# "AnalysisBalanced_Nonlinear.csv
+
+#AnalysisScarceNonLinear.csv
+
+# save as dataframe
+init_data <- as.data.frame(t(init_data))
+
+# inverse of dataframe and naming the columns 
+names(init_data) <- init_data[1,]
+init_data <- init_data[-1,]
+
+head(init_data)
+```
+```{r}
+init_data$Algorithm_Info <- as.character(rownames(init_data))
+
+# Separate the algorithm column into multiple columns
+init_data <- init_data %>%
+  separate(Algorithm_Info, into = c("algorithm", "tuning", "threshold", "imputation", "scarcity_intervention"), sep = "__")
+
+# Simplify the new columns
+init_data$tuning <- ifelse(init_data$tuning == "Tuned", "True", "False")
+init_data$imputation <- ifelse(grepl("Miss_Forest_Imputation", init_data$imputation), "random_forest_imputation", "simple_imputation")
+init_data$scarcity_intervention <- ifelse(grepl("random_undersampling", init_data$scarcity_intervention), 
+                                          "random_undersampling", 
+                                          ifelse(grepl("random_oversampling", init_data$scarcity_intervention), 
+                                                 "random_oversampling", 
+                                                 "no_method"))
+
+# reorder columns
+df_analysis <- init_data[,c(138:142, 1:137)]
+df_analysis <- df_analysis[,-3]
+rownames(df_analysis) <- NULL
+
+df_analysis$algorithm <- ifelse(df_analysis$algorithm == "linear_regression", "logistic_regression", df_analysis$algorithm) 
+
+# Print the transformed data frame
+head(df_analysis)
+```
+```{r}
+library(dplyr)
+library(tidyr)
+
+# Reshape the data to long format
+df_long <- df_analysis %>%
+  pivot_longer(cols = starts_with("AUC"):starts_with("Female_Majority_No_FNR_train"),
+               names_to = "metric",
+               values_to = "value")
+
+df_transformed <- df_long %>%
+  mutate(
+    gender = case_when(
+      grepl("Male", metric) ~ "male",
+      grepl("Female", metric) ~ "female",
+      grepl("AUC_male", metric) ~ "male",
+      grepl("AUC_female", metric) ~ "female",
+      TRUE ~ NA_character_
+    ),
+    ethnicity = case_when(
+      grepl("Minority", metric) ~ "minority",
+      grepl("Majority", metric) ~ "majority",
+      grepl("AUC_male_minority", metric) ~ "minority",
+      grepl("AUC_female_minority", metric) ~ "minority",
+      grepl("AUC_male_majority", metric) ~ "majority",
+      grepl("AUC_female_majority", metric) ~ "majority",
+      TRUE ~ NA_character_
+    ),
+    disability = case_when(
+      grepl("_Yes_", metric) ~ "disabled",
+      grepl("_No_", metric) ~ "nondisabled",
+      grepl("AUC_male_majority_disabled", metric) ~ "disabled",
+      grepl("AUC_male_majority_nondisabled", metric) ~ "nondisabled",
+      grepl("AUC_male_minority_disabled", metric) ~ "disabled",
+      grepl("AUC_male_minority_nondisabled", metric) ~ "nondisabled",
+      grepl("AUC_female_minority_disabled", metric) ~ "disabled",
+      grepl("AUC_female_minority_nondisabled", metric) ~ "nondisabled",
+      grepl("AUC_female_majority_disabled", metric) ~ "disabled",
+      grepl("AUC_female_majority_nondisabled", metric) ~ "nondisabled",
+      grepl("Disabled_proportion_favourable", metric) ~ "diabled",
+      TRUE ~ NA_character_
+    ),
+    threshold = case_when(
+      grepl("lenient", metric) ~ "lenient",
+      grepl("stringent", metric) ~ "stringent",
+      grepl("FPR|FNR", metric) ~ "default",
+      grepl("AUC", metric) ~ NA_character_,
+      TRUE ~ NA_character_
+    ),
+    data_set = case_when(
+      grepl("_train", metric) ~ "train",
+      TRUE ~ "test"
+    )
+  )
+
+df_transformed <- df_transformed %>%
+  mutate(
+    metric = case_when(
+      grepl("AUC", metric) ~ "auc",
+      grepl("FPR_ratio", metric) ~ "FPR_ratio",
+      grepl("FNR_ratio", metric) ~ "FNR_ratio",
+      grepl("FPR", metric) ~ "FPR",
+      grepl("FNR", metric) ~ "FNR",
+      grepl("proportion_favorable_ratio", metric) ~ "favorable_proportion_ratio",
+      grepl("proportion_favorable", metric) ~ "favorable_proportion",
+      grepl("Disabled_proportion_favourable", metric) ~ "favorable_proportion",
+      grepl("accuracy", metric) ~ "accuracy",
+      grepl("f1_score", metric) ~ "f1_score",
+      grepl("precision", metric) ~ "precision",
+      grepl("recall", metric) ~ "recall",
+      TRUE ~ metric  # Keep any unmatched metric as is, for safety
+    )
+  )
+
+df_transformed$value <- as.numeric(df_transformed$value)
+
+table(df_transformed$metric)
+```
+```{r}
+# General change for decisions
+df_filtered <- df_transformed %>%
+  filter(data_set == "test", threshold %in% c("default", NA), is.na(gender), is.na(ethnicity), is.na(disability))
+
+# Imputation method
+mean_abs_change_imputation <- df_filtered %>%
+  filter(metric %in% c("FPR", "FNR", "auc")) %>%
+  group_by(algorithm, scarcity_intervention, tuning, metric) %>%
+  summarize(
+    abs_change = mean(abs(value[imputation == "random_forest_imputation"] - value[imputation == "simple_imputation"]), na.rm = TRUE)
+  )
+
+FPR_imputation_change <- mean(mean_abs_change_imputation[mean_abs_change_imputation$metric == "FPR",]$abs_change, na.rm = TRUE)
+FNR_imputation_change <- mean(mean_abs_change_imputation[mean_abs_change_imputation$metric == "FNR",]$abs_change, na.rm = TRUE)
+AUC_imputation_change <- mean(mean_abs_change_imputation[mean_abs_change_imputation$metric == "auc",]$abs_change, na.rm = TRUE)
+
+FPR_imputation_sd <- sd(mean_abs_change_imputation[mean_abs_change_imputation$metric == "FPR",]$abs_change, na.rm = TRUE)
+FNR_imputation_sd <- sd(mean_abs_change_imputation[mean_abs_change_imputation$metric == "FNR",]$abs_change, na.rm = TRUE)
+AUC_imputation_sd <- sd(mean_abs_change_imputation[mean_abs_change_imputation$metric == "auc",]$abs_change, na.rm = TRUE)
+
+# Tuning
+abs_change_tuning <- df_filtered %>%
+  filter(metric %in% c("FPR", "FNR", "auc")) %>%
+  filter(algorithm %in% c("xgboost", "random_forest")) %>% 
+  group_by(algorithm, scarcity_intervention, imputation, metric) %>%
+  summarize(
+    abs_change = mean(abs(value[tuning == "False"] - value[tuning == "True"]), na.rm = TRUE)
+  )
+
+FPR_tuning_change <- mean(abs_change_tuning[abs_change_tuning$metric == "FPR",]$abs_change, na.rm = TRUE)
+FNR_tuning_change <- mean(abs_change_tuning[abs_change_tuning$metric == "FNR",]$abs_change, na.rm = TRUE)
+AUC_tuning_change <- mean(abs_change_tuning[abs_change_tuning$metric == "auc",]$abs_change, na.rm = TRUE)
+
+FPR_tuning_sd <- sd(abs_change_tuning[abs_change_tuning$metric == "FPR",]$abs_change, na.rm = TRUE)
+FNR_tuning_sd <- sd(abs_change_tuning[abs_change_tuning$metric == "FNR",]$abs_change, na.rm = TRUE)
+AUC_tuning_sd <- sd(abs_change_tuning[abs_change_tuning$metric == "auc",]$abs_change, na.rm = TRUE)
+
+# Scarcity Intervention
+mean_abs_change_scarcity <- df_filtered %>%
+  filter(metric %in% c("FPR", "FNR", "auc")) %>%
+  group_by(algorithm, imputation, tuning, metric) %>%
+  summarize(
+    abs_change = mean(abs(value[scarcity_intervention == "no_method"] - value[scarcity_intervention != "no_method"]), na.rm = TRUE)
+  )
+
+FPR_scarcity_change <- mean(mean_abs_change_scarcity[mean_abs_change_scarcity$metric == "FPR",]$abs_change, na.rm = TRUE)
+FNR_scarcity_change <- mean(mean_abs_change_scarcity[mean_abs_change_scarcity$metric == "FNR",]$abs_change, na.rm = TRUE)
+AUC_scarcity_change <- mean(mean_abs_change_scarcity[mean_abs_change_scarcity$metric == "auc",]$abs_change, na.rm = TRUE)
+
+FPR_scarcity_sd <- sd(mean_abs_change_scarcity[mean_abs_change_scarcity$metric == "FPR",]$abs_change, na.rm = TRUE)
+FNR_scarcity_sd <- sd(mean_abs_change_scarcity[mean_abs_change_scarcity$metric == "FNR",]$abs_change, na.rm = TRUE)
+AUC_scarcity_sd <- sd(mean_abs_change_scarcity[mean_abs_change_scarcity$metric == "auc",]$abs_change, na.rm = TRUE)
+
+# Choice of algorithm
+mean_abs_change_algorithm <- df_filtered %>%
+  filter(metric %in% c("FPR", "FNR", "auc")) %>%
+  group_by(scarcity_intervention, imputation, metric) %>%
+  summarize(
+    abs_change = mean(abs(value[algorithm == "logistic_regression"] - value[algorithm != "logistic_regression"]), na.rm = TRUE)
+  )
+
+FPR_algorithm_change <- mean(mean_abs_change_algorithm[mean_abs_change_algorithm$metric == "FPR",]$abs_change, na.rm = TRUE)
+FNR_algorithm_change <- mean(mean_abs_change_algorithm[mean_abs_change_algorithm$metric == "FNR",]$abs_change, na.rm = TRUE)
+AUC_algorithm_change <- mean(mean_abs_change_algorithm[mean_abs_change_algorithm$metric == "auc",]$abs_change, na.rm = TRUE)
+
+FPR_algorithm_sd <- sd(mean_abs_change_algorithm[mean_abs_change_algorithm$metric == "FPR",]$abs_change, na.rm = TRUE)
+FNR_algorithm_sd <- sd(mean_abs_change_algorithm[mean_abs_change_algorithm$metric == "FNR",]$abs_change, na.rm = TRUE)
+AUC_algorithm_sd <- sd(mean_abs_change_algorithm[mean_abs_change_algorithm$metric == "auc",]$abs_change, na.rm = TRUE)
+
+
+```
+```{r}
+# Define all subpopulations based on the intersection of gender, ethnicity, and disability
+subpopulations <- df_transformed %>%
+  filter(data_set == "test", !is.na(gender), !is.na(ethnicity), !is.na(disability), threshold == "default") 
+
+# Imputation method change for subpopulations
+mean_abs_change_imputation_subpop <- subpopulations %>%
+  filter(metric %in% c("FPR", "FNR")) %>%
+  group_by(algorithm, scarcity_intervention, tuning, metric, gender, ethnicity, disability) %>%
+  summarize(
+    abs_change = mean(abs(value[imputation == "random_forest_imputation"] - value[imputation == "simple_imputation"]), na.rm = TRUE)
+  )
+
+FPR_imputation_change_subpop <- mean_abs_change_imputation_subpop %>%
+  filter(metric == "FPR") %>%
+  group_by(gender, ethnicity, disability) %>%
+  summarize(mean_change = mean(abs_change, na.rm = TRUE), sd_change = sd(abs_change, na.rm = TRUE))
+
+FNR_imputation_change_subpop <- mean_abs_change_imputation_subpop %>%
+  filter(metric == "FNR") %>%
+  group_by(gender, ethnicity, disability) %>%
+  summarize(mean_change = mean(abs_change, na.rm = TRUE), sd_change = sd(abs_change, na.rm = TRUE))
+
+# Scarcity intervention change for subpopulations
+mean_abs_change_scarcity_subpop <- subpopulations %>%
+  filter(metric %in% c("FPR", "FNR")) %>%
+  group_by(algorithm, imputation, tuning, metric, gender, ethnicity, disability) %>%
+  summarize(
+    abs_change = mean(abs(value[scarcity_intervention == "no_method"] - value[scarcity_intervention != "no_method"]), na.rm = TRUE)
+  )
+
+FPR_scarcity_change_subpop <- mean_abs_change_scarcity_subpop %>%
+  filter(metric == "FPR") %>%
+  group_by(gender, ethnicity, disability) %>%
+  summarize(mean_change = mean(abs_change, na.rm = TRUE), sd_change = sd(abs_change, na.rm = TRUE))
+
+FNR_scarcity_change_subpop <- mean_abs_change_scarcity_subpop %>%
+  filter(metric == "FNR") %>%
+  group_by(gender, ethnicity, disability) %>%
+  summarize(mean_change = mean(abs_change, na.rm = TRUE), sd_change = sd(abs_change, na.rm = TRUE))
+
+# Algorithm choice change for subpopulations
+mean_abs_change_algorithm_subpop <- subpopulations %>%
+  filter(metric %in% c("FPR", "FNR")) %>%
+  group_by(scarcity_intervention, imputation, metric, gender, ethnicity, disability) %>%
+  summarize(
+    abs_change = mean(abs(value[algorithm == "logistic_regression"] - value[algorithm != "logistic_regression"]), na.rm = TRUE)
+  )
+
+FPR_algorithm_change_subpop <- mean_abs_change_algorithm_subpop %>%
+  filter(metric == "FPR") %>%
+  group_by(gender, ethnicity, disability) %>%
+  summarize(mean_change = mean(abs_change, na.rm = TRUE), sd_change = sd(abs_change, na.rm = TRUE))
+
+FNR_algorithm_change_subpop <- mean_abs_change_algorithm_subpop %>%
+  filter(metric == "FNR") %>%
+  group_by(gender, ethnicity, disability) %>%
+  summarize(mean_change = mean(abs_change, na.rm = TRUE), sd_change = sd(abs_change, na.rm = TRUE))
+
+# Tuning
+mean_abs_change_tuning_subpop <- subpopulations %>%
+  filter(metric %in% c("FPR", "FNR")) %>%
+  filter(algorithm %in% c("xgboost", "random_forest")) %>%
+  group_by(algorithm, scarcity_intervention, tuning, metric, gender, ethnicity, disability) %>%
+  summarize(
+    abs_change = mean(abs(value[imputation == "random_forest_imputation"] - value[imputation == "simple_imputation"]), na.rm = TRUE)
+  )
+
+FPR_tuning_change_subpop <- mean_abs_change_tuning_subpop %>%
+  filter(metric == "FPR") %>%
+  group_by(gender, ethnicity, disability) %>%
+  summarize(mean_change = mean(abs_change, na.rm = TRUE), sd_change = sd(abs_change, na.rm = TRUE))
+
+FNR_tuning_change_subpop <- mean_abs_change_tuning_subpop %>%
+  filter(metric == "FNR") %>%
+  group_by(gender, ethnicity, disability) %>%
+  summarize(mean_change = mean(abs_change, na.rm = TRUE), sd_change = sd(abs_change, na.rm = TRUE))
+```
+
+```{r}
+overall_change <- data.frame(
+  Method_change = c(
+    "Imputation",
+    "Algorithm",
+    "Tuning",
+    "Scarcity Intervention"),
+  Mean_change_FPR = c(FPR_imputation_change, FPR_algorithm_change, FPR_tuning_change, FPR_scarcity_change),
+  SD_change_FPR = c(FPR_imputation_sd, FPR_algorithm_sd, FPR_tuning_sd, FPR_scarcity_sd),
+  Mean_change_FNR = c(FNR_imputation_change, FNR_algorithm_change, FNR_tuning_change, FNR_scarcity_change),
+  SD_change_FNR = c(FNR_imputation_sd, FNR_algorithm_sd, FNR_tuning_sd, FNR_scarcity_sd),
+  Mean_change_AUC = c(AUC_imputation_change, AUC_algorithm_change, AUC_tuning_change, AUC_scarcity_change),
+  SD_change_AUC = c(AUC_imputation_sd, AUC_algorithm_sd, AUC_tuning_sd, AUC_scarcity_sd)
+)
+```
+
+```{r}
+library(tidyverse)
+
+# Assuming overall_change is your data frame
+# Reshaping the data to long format for means and standard deviations
+overall_change_long <- overall_change %>%
+  pivot_longer(
+    cols = c(Mean_change_FPR, Mean_change_FNR, Mean_change_AUC),
+    names_to = "Metric",
+    values_to = "Mean"
+  ) %>%
+  mutate(
+    SD = case_when(
+      Metric == "Mean_change_FPR" ~ SD_change_FPR,
+      Metric == "Mean_change_FNR" ~ SD_change_FNR,
+      Metric == "Mean_change_AUC" ~ SD_change_AUC
+    )
+  )
+
+overall_change_long <- as.data.frame(overall_change_long[,c(1,5:7)])
+
+# Automatically add line breaks after a specified number of characters
+overall_change_long$Method_change <- gsub(" ", "\n", overall_change_long$Method_change)
+
+# Reorder the levels of Method_change in the desired order
+overall_change_long$Method_change <- factor(overall_change_long$Method_change, 
+                                            levels = c("Imputation", "Scarcity\nIntervention", "Algorithm", "Tuning"))
+
+# Plotting
+plot1 <- ggplot(overall_change_long, aes(x = Method_change, y = Mean, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), 
+                width = 0.2, 
+                position = position_dodge(0.7)) +
+  labs(title = "General Mean Differences of Decision Points",
+       x = "Method",
+       y = "Mean Change") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Mean_change_AUC" = "darkgrey",  "Mean_change_FNR" = "darkcyan", "Mean_change_FPR" = "darkred"),
+                    labels = c("AUC", "FNR", "FPR")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5, size = 10),
+        plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
+```{r}
+# Combine the mean change and sd into a dataframe for each method and metric
+# Imputation
+imputation_results <- data.frame(
+  Subpopulation = c(
+  "Overall",
+  "Female Majority Disabled",
+  "Female Majority Non-Disabled",
+  "Female Minority Disabled",
+  "Female Minority Non-Disabled",
+  "Male Majority Disabled",
+  "Male Majority Non-Disabled",
+  "Male Minority Disabled",
+  "Male Minority Non-Disabled"
+  ),
+  FPR = c(FPR_imputation_change, FPR_imputation_change_subpop$mean_change),
+  FPR_SD = c(FPR_imputation_sd, FPR_imputation_change_subpop$sd_change), 
+  FNR = c(FNR_imputation_change, FNR_imputation_change_subpop$mean_change),
+  FNR_SD = c(FNR_imputation_sd, FNR_imputation_change_subpop$sd_change),
+  AUC = rep(AUC_imputation_change, 9),
+  AUC_SD = rep(AUC_imputation_sd, 9)
+)
+
+# Algorithm
+algorithm_results <- data.frame(
+  Subpopulation = c(
+  "Overall",
+  "Female Majority Disabled",
+  "Female Majority Non-Disabled",
+  "Female Minority Disabled",
+  "Female Minority Non-Disabled",
+  "Male Majority Disabled",
+  "Male Majority Non-Disabled",
+  "Male Minority Disabled",
+  "Male Minority Non-Disabled"
+  ),
+  FPR = c(FPR_algorithm_change, FPR_algorithm_change_subpop$mean_change),
+  FPR_SD = c(FPR_algorithm_sd, FPR_algorithm_change_subpop$sd_change), 
+  FNR = c(FNR_algorithm_change, FNR_algorithm_change_subpop$mean_change),
+  FNR_SD = c(FNR_algorithm_sd, FNR_algorithm_change_subpop$sd_change),
+  AUC = rep(AUC_algorithm_change, 9),
+  AUC_SD = rep(AUC_algorithm_sd, 9)
+)
+
+# Tuning
+tuning_results <- data.frame(
+  Subpopulation = c(
+  "Overall",
+  "Female Majority Disabled",
+  "Female Majority Non-Disabled",
+  "Female Minority Disabled",
+  "Female Minority Non-Disabled",
+  "Male Majority Disabled",
+  "Male Majority Non-Disabled",
+  "Male Minority Disabled",
+  "Male Minority Non-Disabled"
+  ),
+  FPR = c(FPR_tuning_change, FPR_tuning_change_subpop$mean_change),
+  FPR_SD = c(FPR_tuning_sd, FPR_tuning_change_subpop$sd_change), 
+  FNR = c(FNR_tuning_change, FNR_tuning_change_subpop$mean_change),
+  FNR_SD = c(FNR_tuning_sd, FNR_tuning_change_subpop$sd_change),
+  AUC = rep(AUC_tuning_change, 9),
+  AUC_SD = rep(AUC_tuning_sd, 9)
+)
+
+# Scarcity intervention
+scarcity_results <- data.frame(
+  Subpopulation = c(
+  "Overall",
+  "Female Majority Disabled",
+  "Female Majority Non-Disabled",
+  "Female Minority Disabled",
+  "Female Minority Non-Disabled",
+  "Male Majority Disabled",
+  "Male Majority Non-Disabled",
+  "Male Minority Disabled",
+  "Male Minority Non-Disabled"
+  ),
+  FPR = c(FPR_scarcity_change, FPR_scarcity_change_subpop$mean_change),
+  FPR_SD = c(FPR_scarcity_sd, FPR_scarcity_change_subpop$sd_change), 
+  FNR = c(FNR_scarcity_change, FNR_scarcity_change_subpop$mean_change),
+  FNR_SD = c(FNR_scarcity_sd, FNR_scarcity_change_subpop$sd_change),
+  AUC = rep(AUC_scarcity_change, 9),
+  AUC_SD = rep(AUC_scarcity_sd, 9)
+)
+```
+
+```{r}
+library(tidyverse)
+
+# Assuming imputation_results is your data frame
+imputation_results_long <- imputation_results %>%
+  pivot_longer(
+    cols = c(FPR, FNR),  # Only keep FPR and FNR
+    names_to = "Metric",
+    values_to = "Mean"
+  ) %>%
+  mutate(
+    SD = case_when(
+      Metric == "FPR" ~ FPR_SD,
+      Metric == "FNR" ~ FNR_SD
+    )
+  ) 
+
+imputation_results_long <- imputation_results_long[,c(1,6:8)]
+
+# Automatically add line breaks after a specified number of characters
+imputation_results_long$Subpopulation <- gsub(" ", "\n", imputation_results_long$Subpopulation)
+
+# Plot with wrapped Subpopulation names
+plot2 <- ggplot(imputation_results_long, aes(x = Subpopulation, y = Mean, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), 
+                width = 0.2, 
+                position = position_dodge(0.7)) +
+  labs(title = "Mean Differences for Imputation Methods",
+       x = "Subpopulations",
+       y = "Mean Differences") +
+  theme_minimal() +
+  scale_fill_manual(values = c("FPR" = "darkred", "FNR" = "darkcyan")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 0),  # Align center
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+# algorithm
+# Assuming imputation_results is your data frame
+algorithm_results_long <- algorithm_results %>%
+  pivot_longer(
+    cols = c(FPR, FNR),  # Only keep FPR and FNR
+    names_to = "Metric",
+    values_to = "Mean"
+  ) %>%
+  mutate(
+    SD = case_when(
+      Metric == "FPR" ~ FPR_SD,
+      Metric == "FNR" ~ FNR_SD
+    )
+  ) 
+
+algorithm_results_long <- algorithm_results_long[,c(1,6:8)]
+
+# Automatically add line breaks after a specified number of characters
+algorithm_results_long$Subpopulation <- gsub(" ", "\n", algorithm_results_long$Subpopulation)
+
+# Plotting
+plot3 <- ggplot(algorithm_results_long, aes(x = Subpopulation, y = Mean, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), 
+                width = 0.2, 
+                position = position_dodge(0.7)) +
+  labs(title = "Mean Differrences for Algorithm Choice",
+       x = "Subpopulations",
+       y = "Mean Differece") +
+  theme_minimal() +
+  scale_fill_manual(values = c("FPR" = "darkred", "FNR" = "darkcyan")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+# Tuning change
+# Assuming imputation_results is your data frame
+tuning_results_long <- tuning_results %>%
+  pivot_longer(
+    cols = c(FPR, FNR),  # Only keep FPR and FNR
+    names_to = "Metric",
+    values_to = "Mean"
+  ) %>%
+  mutate(
+    SD = case_when(
+      Metric == "FPR" ~ FPR_SD,
+      Metric == "FNR" ~ FNR_SD
+    )
+  ) 
+
+tuning_results_long <- tuning_results_long[,c(1,6:8)]
+
+# Automatically add line breaks after a specified number of characters
+tuning_results_long$Subpopulation <- gsub(" ", "\n", tuning_results_long$Subpopulation)
+
+# Plotting
+plot4 <- ggplot(tuning_results_long, aes(x = Subpopulation, y = Mean, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), 
+                width = 0.2, 
+                position = position_dodge(0.7)) +
+  labs(title = "Mean Difference for Model Tuning",
+       x = "Subpopulations",
+       y = "Mean Difference") +
+  theme_minimal() +
+  scale_fill_manual(values = c("FPR" = "darkred", "FNR" = "darkcyan")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+# Scarcity intervention
+# Assuming imputation_results is your data frame
+scarcity_results_long <- scarcity_results %>%
+  pivot_longer(
+    cols = c(FPR, FNR),  # Only keep FPR and FNR
+    names_to = "Metric",
+    values_to = "Mean"
+  ) %>%
+  mutate(
+    SD = case_when(
+      Metric == "FPR" ~ FPR_SD,
+      Metric == "FNR" ~ FNR_SD
+    )
+  ) 
+
+scarcity_results_long <- scarcity_results_long[,c(1,6:8)]
+
+# Automatically add line breaks after a specified number of characters
+scarcity_results_long$Subpopulation <- gsub(" ", "\n", scarcity_results_long$Subpopulation)
+
+# Plotting
+plot5 <- ggplot(scarcity_results_long, aes(x = Subpopulation, y = Mean, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.7) +
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), 
+                width = 0.2, 
+                position = position_dodge(0.7)) +
+  labs(title = "Mean Difference for Scarcity Intervention",
+       x = "Subpopulations",
+       y = "Mean Difference") +
+  theme_minimal() +
+  scale_fill_manual(values = c("FPR" = "darkred", "FNR" = "darkcyan")) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+# General change for decisions
+df_filtered <- df_transformed %>%
+  filter(data_set == "test", threshold %in% c("default", NA), is.na(gender), is.na(ethnicity), is.na(disability))
+
+# Imputation method
+mean_imputation <- df_filtered %>%
+  filter(metric %in% c("FPR", "FNR", "auc")) %>%
+  group_by(algorithm, scarcity_intervention, tuning, metric) %>%
+  summarize(
+    mean_simple_imputation = mean(value[imputation == "simple_imputation"], na.rm = TRUE),
+    mean_rf_imputation = mean(value[imputation == "random_forest_imputation"], na.rm = TRUE)
+  )
+
+FPR_mean_simple_imputation <- mean(mean_imputation[mean_imputation$metric == "FPR",]$mean_simple_imputation, na.rm = TRUE)
+FPR_sd_simple_imputation <- sd(mean_imputation[mean_imputation$metric == "FPR",]$mean_simple_imputation, na.rm = TRUE)
+FNR_mean_simple_imputation <- mean(mean_imputation[mean_imputation$metric == "FNR",]$mean_simple_imputation, na.rm = TRUE)
+FNR_sd_simple_imputation <- sd(mean_imputation[mean_imputation$metric == "FNR",]$mean_simple_imputation, na.rm = TRUE)
+AUC_mean_simple_imputation <- mean(mean_imputation[mean_imputation$metric == "auc",]$mean_simple_imputation, na.rm = TRUE)
+AUC_sd_simple_imputation <- sd(mean_imputation[mean_imputation$metric == "auc",]$mean_simple_imputation, na.rm = TRUE)
+
+FPR_mean_rf_imputation <- mean(mean_imputation[mean_imputation$metric == "FPR",]$mean_rf_imputation, na.rm = TRUE)
+FPR_sd_rf_imputation <- sd(mean_imputation[mean_imputation$metric == "FPR",]$mean_rf_imputation, na.rm = TRUE)
+FNR_mean_rf_imputation <- mean(mean_imputation[mean_imputation$metric == "FNR",]$mean_rf_imputation, na.rm = TRUE)
+FNR_sd_rf_imputation <- sd(mean_imputation[mean_imputation$metric == "FNR",]$mean_rf_imputation, na.rm = TRUE)
+AUC_mean_rf_imputation <- mean(mean_imputation[mean_imputation$metric == "auc",]$mean_rf_imputation, na.rm = TRUE)
+AUC_sd_rf_imputation <- sd(mean_imputation[mean_imputation$metric == "auc",]$mean_rf_imputation, na.rm = TRUE)
+
+# Tuning
+mean_tuning <- df_filtered %>%
+  filter(metric %in% c("FPR", "FNR", "auc")) %>%
+  filter(algorithm %in% c("random_forest", "xgboost")) %>%
+  group_by(algorithm, scarcity_intervention, imputation, metric) %>%
+  summarize(
+    mean_tuned = mean(value[tuning == "True"], na.rm = TRUE),
+    mean_untuned = mean(value[tuning == "False"], na.rm = TRUE)
+  )
+
+FPR_mean_tuned <- mean(mean_tuning[mean_tuning$metric == "FPR",]$mean_tuned, na.rm = TRUE)
+FPR_sd_tuned <- sd(mean_tuning[mean_tuning$metric == "FPR",]$mean_tuned, na.rm = TRUE)
+FNR_mean_tuned <- mean(mean_tuning[mean_tuning$metric == "FNR",]$mean_tuned, na.rm = TRUE)
+FNR_sd_tuned <- sd(mean_tuning[mean_tuning$metric == "FNR",]$mean_tuned, na.rm = TRUE)
+AUC_mean_tuned <- mean(mean_tuning[mean_tuning$metric == "auc",]$mean_tuned, na.rm = TRUE)
+AUC_sd_tuned <- sd(mean_tuning[mean_tuning$metric == "auc",]$mean_tuned, na.rm = TRUE)
+
+FPR_mean_untuned <- mean(mean_tuning[mean_tuning$metric == "FPR",]$mean_untuned, na.rm = TRUE)
+FPR_sd_untuned <- sd(mean_tuning[mean_tuning$metric == "FPR",]$mean_untuned, na.rm = TRUE)
+FNR_mean_untuned <- mean(mean_tuning[mean_tuning$metric == "FNR",]$mean_untuned, na.rm = TRUE)
+FNR_sd_untuned <- sd(mean_tuning[mean_tuning$metric == "FNR",]$mean_untuned, na.rm = TRUE)
+AUC_mean_untuned <- mean(mean_tuning[mean_tuning$metric == "auc",]$mean_untuned, na.rm = TRUE)
+AUC_sd_untuned <- sd(mean_tuning[mean_tuning$metric == "auc",]$mean_untuned, na.rm = TRUE)
+
+# Scarcity Intervention
+mean_scacity <- df_filtered %>%
+  filter(metric %in% c("FPR", "FNR", "auc")) %>%
+  group_by(algorithm, imputation, tuning, metric) %>%
+  summarize(
+    mean_no_method = mean(value[scarcity_intervention == "no_method"], na.rm = TRUE),
+    mean_oversampling = mean(value[scarcity_intervention == "random_oversampling"], na.rm = TRUE),
+    mean_undersampling = mean(value[scarcity_intervention == "random_undersampling"], na.rm = TRUE)
+  )
+
+FPR_mean_scarcity_no_method <- mean(mean_scacity[mean_scacity$metric == "FPR",]$mean_no_method, na.rm = TRUE)
+FPR_sd_scarcity_no_method <- sd(mean_scacity[mean_scacity$metric == "FPR",]$mean_no_method, na.rm = TRUE)
+FNR_mean_scarcity_no_method <- mean(mean_scacity[mean_scacity$metric == "FNR",]$mean_no_method, na.rm = TRUE)
+FNR_sd_scarcity_no_method <- sd(mean_scacity[mean_scacity$metric == "FNR",]$mean_no_method, na.rm = TRUE)
+AUC_mean_scarcity_no_method <- mean(mean_scacity[mean_scacity$metric == "auc",]$mean_no_method, na.rm = TRUE)
+AUC_sd_scarcity_no_method <- sd(mean_scacity[mean_scacity$metric == "auc",]$mean_no_method, na.rm = TRUE)
+
+FPR_mean_scarcity_oversampling <- mean(mean_scacity[mean_scacity$metric == "FPR",]$mean_oversampling, na.rm = TRUE)
+FPR_sd_scarcity_oversampling <- sd(mean_scacity[mean_scacity$metric == "FPR",]$mean_oversampling, na.rm = TRUE)
+FNR_mean_scarcity_oversampling <- mean(mean_scacity[mean_scacity$metric == "FNR",]$mean_oversampling, na.rm = TRUE)
+FNR_sd_scarcity_oversampling <- sd(mean_scacity[mean_scacity$metric == "FNR",]$mean_oversampling, na.rm = TRUE)
+AUC_mean_scarcity_oversampling <- mean(mean_scacity[mean_scacity$metric == "auc",]$mean_oversampling, na.rm = TRUE)
+AUC_sd_scarcity_oversampling <- sd(mean_scacity[mean_scacity$metric == "auc",]$mean_oversampling, na.rm = TRUE)
+
+FPR_mean_scarcity_undersampling <- mean(mean_scacity[mean_scacity$metric == "FPR",]$mean_undersampling, na.rm = TRUE)
+FPR_sd_scarcity_undersampling <- sd(mean_scacity[mean_scacity$metric == "FPR",]$mean_undersampling, na.rm = TRUE)
+FNR_mean_scarcity_undersampling <- mean(mean_scacity[mean_scacity$metric == "FNR",]$mean_undersampling, na.rm = TRUE)
+FNR_sd_scarcity_undersampling <- sd(mean_scacity[mean_scacity$metric == "FNR",]$mean_undersampling, na.rm = TRUE)
+AUC_mean_scarcity_undersampling <- mean(mean_scacity[mean_scacity$metric == "auc",]$mean_undersampling, na.rm = TRUE)
+AUC_sd_scarcity_undersampling <- sd(mean_scacity[mean_scacity$metric == "auc",]$mean_undersampling, na.rm = TRUE)
+
+# Choice of algorithm
+mean_algorithm <- df_filtered %>%
+  filter(metric %in% c("FPR", "FNR", "auc")) %>%
+  group_by(scarcity_intervention, imputation, tuning, metric) %>%
+  summarize(
+    mean_logistic_regression = mean(value[algorithm == "logistic_regression"], na.rm = TRUE),
+    mean_xgboost = mean(value[algorithm == "xgboost"], na.rm = TRUE),
+    mean_random_forest = mean(value[algorithm == "random_forest"], na.rm = TRUE)
+  )
+
+FPR_mean_logistic_regression <- mean(mean_algorithm[mean_algorithm$metric == "FPR",]$mean_logistic_regression, na.rm = TRUE)
+FPR_sd_logistic_regression <- sd(mean_algorithm[mean_algorithm$metric == "FPR",]$mean_logistic_regression, na.rm = TRUE)
+FNR_mean_logistic_regression <- mean(mean_algorithm[mean_algorithm$metric == "FNR",]$mean_logistic_regression, na.rm = TRUE)
+FNR_sd_logistic_regression <- sd(mean_algorithm[mean_algorithm$metric == "FNR",]$mean_logistic_regression, na.rm = TRUE)
+AUC_mean_logistic_regression <- mean(mean_algorithm[mean_algorithm$metric == "auc",]$mean_logistic_regression, na.rm = TRUE)
+AUC_sd_logistic_regression <- sd(mean_algorithm[mean_algorithm$metric == "auc",]$mean_logistic_regression, na.rm = TRUE)
+
+FPR_mean_xgboost <- mean(mean_algorithm[mean_algorithm$metric == "FPR",]$mean_xgboost, na.rm = TRUE)
+FPR_sd_xgboost <- sd(mean_algorithm[mean_algorithm$metric == "FPR",]$mean_xgboost, na.rm = TRUE)
+FNR_mean_xgboost <- mean(mean_algorithm[mean_algorithm$metric == "FNR",]$mean_xgboost, na.rm = TRUE)
+FNR_sd_xgboost <- sd(mean_algorithm[mean_algorithm$metric == "FNR",]$mean_xgboost, na.rm = TRUE)
+AUC_mean_xgboost <- mean(mean_algorithm[mean_algorithm$metric == "auc",]$mean_xgboost, na.rm = TRUE)
+AUC_sd_xgboost <- sd(mean_algorithm[mean_algorithm$metric == "auc",]$mean_xgboost, na.rm = TRUE)
+
+FPR_mean_random_forest <- mean(mean_algorithm[mean_algorithm$metric == "FPR",]$mean_random_forest, na.rm = TRUE)
+FPR_sd_random_forest <- sd(mean_algorithm[mean_algorithm$metric == "FPR",]$mean_random_forest, na.rm = TRUE)
+FNR_mean_random_forest <- mean(mean_algorithm[mean_algorithm$metric == "FNR",]$mean_random_forest, na.rm = TRUE)
+FNR_sd_random_forest <- sd(mean_algorithm[mean_algorithm$metric == "FNR",]$mean_random_forest, na.rm = TRUE)
+AUC_mean_random_forest <- mean(mean_algorithm[mean_algorithm$metric == "auc",]$mean_random_forest, na.rm = TRUE)
+AUC_sd_random_forest <- sd(mean_algorithm[mean_algorithm$metric == "auc",]$mean_random_forest, na.rm = TRUE)
+
+
+# store as data frame
+overall_mean <- data.frame(
+  Method_group = c(
+    rep("Imputation", 2),
+    rep("Tuning", 2),
+    rep("Scarcity Intervention", 3),
+    rep("Algorithm", 3)),
+  Method = c("Simple Imputation", 
+             "Random Forest Imputation",
+             "Tuned",
+             "Untuned",
+             "No Scarcity Intervention",
+             "Random Oversampling",
+             "Random Undersampling",
+             "Logistic Regression",
+             "XGBoost",
+             "Random Forest"),
+  
+  mean_FPR = c(FPR_mean_simple_imputation,FPR_mean_rf_imputation,FPR_mean_tuned,FPR_mean_untuned,FPR_mean_scarcity_no_method, FPR_mean_scarcity_oversampling, FPR_mean_scarcity_undersampling, FPR_mean_logistic_regression, FPR_mean_xgboost, FPR_mean_random_forest),
+  
+  mean_FNR = c(FNR_mean_simple_imputation,FNR_mean_rf_imputation,FNR_mean_tuned,FNR_mean_untuned,FNR_mean_scarcity_no_method, FNR_mean_scarcity_oversampling, FNR_mean_scarcity_undersampling, FNR_mean_logistic_regression, FNR_mean_xgboost, FNR_mean_random_forest),
+  
+  mean_AUC =c(AUC_mean_simple_imputation,AUC_mean_rf_imputation,AUC_mean_tuned,AUC_mean_untuned,AUC_mean_scarcity_no_method, AUC_mean_scarcity_oversampling, AUC_mean_scarcity_undersampling, AUC_mean_logistic_regression, AUC_mean_xgboost, AUC_mean_random_forest),
+  
+    sd_FPR = c(FPR_sd_simple_imputation,FPR_sd_rf_imputation,FPR_sd_tuned,FPR_sd_untuned,FPR_sd_scarcity_no_method, FPR_sd_scarcity_oversampling, FPR_sd_scarcity_undersampling, FPR_sd_logistic_regression, FPR_sd_xgboost, FPR_sd_random_forest),
+  
+  sd_FNR = c(FNR_sd_simple_imputation,FNR_sd_rf_imputation,FNR_sd_tuned,FNR_sd_untuned,FNR_sd_scarcity_no_method, FNR_sd_scarcity_oversampling, FNR_sd_scarcity_undersampling, FNR_sd_logistic_regression, FNR_sd_xgboost, FNR_sd_random_forest),
+  
+  sd_AUC = c(AUC_sd_simple_imputation,AUC_sd_rf_imputation,AUC_sd_tuned,AUC_sd_untuned,AUC_sd_scarcity_no_method, AUC_sd_scarcity_oversampling, AUC_sd_scarcity_undersampling, AUC_sd_logistic_regression, AUC_sd_xgboost, AUC_sd_random_forest)
+)
+
+```
+
+```{r}
+library(tidyverse)
+
+# Define the order of method groups and their sub-methods
+overall_mean$Method_group <- factor(overall_mean$Method_group, levels = c(
+  "Imputation", "Tuning", "Scarcity Intervention", "Algorithm"
+))
+
+overall_mean$Method <- factor(overall_mean$Method, levels = c(
+  "Simple Imputation", "Random Forest Imputation",  # Imputation methods
+  "Tuned", "Untuned",  # Tuning methods
+  "No Scarcity Intervention", "Random Oversampling", "Random Undersampling",  # Scarcity interventions
+  "Logistic Regression", "XGBoost", "Random Forest"  # Algorithm methods
+))
+
+# Reshape data frame
+df_long <- overall_mean %>%
+  pivot_longer(
+    cols = c(mean_FPR, mean_FNR, mean_AUC),  # Reshape mean columns
+    names_to = "Metric",
+    values_to = "Mean"
+  ) %>%
+  pivot_longer(
+    cols = c(sd_FPR, sd_FNR, sd_AUC),  # Reshape SD columns
+    names_to = "SD_Metric",
+    values_to = "SD"
+  ) %>%
+  filter(str_remove(Metric, "mean_") == str_remove(SD_Metric, "sd_"))  # Ensure correct SD is used for corresponding mean
+
+# Automatically add line breaks after a specified number of characters
+df_long$Method <- gsub(" ", "\n", df_long$Method)
+df_long$Method <- gsub("Over", "Over-\n", df_long$Method)
+df_long$Method <- gsub("Under", "Under-\n", df_long$Method)
+
+# Reorder the levels of Method_group in the desired order
+df_long$Method_group <- factor(df_long$Method_group, 
+                               levels = c("Imputation", "Scarcity Intervention", "Algorithm", "Tuning"))
+
+
+# Plotting
+plot6 <- ggplot(df_long, aes(x = Method, y = Mean, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.6), width = 0.6) +  # Group bars closer
+  geom_errorbar(aes(ymin = Mean - SD, ymax = Mean + SD), 
+                width = 0.2, 
+                position = position_dodge(0.6)) +  # Same dodge width for error bars
+  facet_grid(~ Method_group, scales = "free_x", space = "free_x") +  # Separate method groups with gaps
+  labs(title = "Mean Performance for Different Pipeline Choices",
+       x = "Method",
+       y = "Mean Value") +
+  scale_fill_manual(
+    values = c("mean_FPR" = "darkred", "mean_FNR" = "darkcyan", "mean_AUC" = "darkgrey"),
+    labels = c("mean_FPR" = "FPR", "mean_FNR" = "FNR", "mean_AUC" = "AUC")  # Rename the legend
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    plot.title = element_text(hjust = 0.5),  # Center the title
+    legend.title = element_blank()  # Remove the legend title
+  )
+
+
+
+```
+
+
+```{r}
+library(gridExtra)
+
+lay = rbind(c(1,1,2,2,2,2,2,2),
+            c(1,1,2,2,2,2,2,2),
+            c(1,1,2,2,2,2,2,2),
+            c(3,3,3,3,4,4,4,4),
+            c(3,3,3,3,4,4,4,4),
+            c(5,5,5,5,6,6,6,6),
+            c(5,5,5,5,6,6,6,6))
+
+dashboard2 <- grid.arrange(plot1, plot6, plot2, plot3, plot4, plot5, layout_matrix = lay)
+```
+```{r}
+plot1
+plot2
+plot3
+plot4
+plot5
+plot6
+
+```
+
+```{r}
+# Filter for the relevant test data, making sure all relevant fields are non-NA
+df_threshold <- df_transformed %>%
+  filter(data_set == "test", 
+         !is.na(gender), 
+         !is.na(ethnicity), 
+         !is.na(disability), 
+         !is.na(threshold), 
+         metric %in% c("FPR", "FNR"))  # Ensure we are only summarizing for FPR and FNR
+
+# fix wrongly flipped labels
+df_threshold[df_threshold$metric == "FNR" & df_threshold$threshold == "stringent" & df_threshold$value == 1,]$value <- 0
+df_threshold[df_threshold$metric == "FPR" & df_threshold$threshold == "stringent" & df_threshold$value == 0,]$value <- 1
+
+# Group by the intersectional groups and the threshold
+df_summary <- df_threshold %>%
+  group_by(gender, ethnicity, disability, threshold, metric) %>%
+  summarise(
+    mean_value = mean(value, na.rm = TRUE),
+    sd_value = sd(value, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Create a more readable label format by using str_wrap or manually specifying
+df_summary$Subpopulation <- with(df_summary, paste(gender, ethnicity, disability, sep = "\n"))
+
+# Split the data into FNR and FPR subsets
+df_fnr <- df_summary %>% filter(metric == "FNR")
+df_fpr <- df_summary %>% filter(metric == "FPR")
+
+# Plot for FNR
+plot_fnr <- ggplot(df_fnr, aes(x = Subpopulation, y = mean_value, fill = threshold)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.7) +
+  geom_errorbar(aes(ymin = mean_value - sd_value, ymax = mean_value + sd_value), 
+                width = 0.2, 
+                position = position_dodge(0.7)) +
+  labs(title = "Mean FNR by Intersectional Groups and Threshold", 
+       x = "Intersectional Group", 
+       y = "Mean FNR") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Adjust x-axis labels for better readability
+        plot.title = element_text(hjust = 0.5)) +  # Center the plot title
+  scale_fill_manual(values = c("default" = "darkgrey", "lenient" = "darkcyan", "stringent" = "darkred"),
+                    name = "Threshold")  +
+  theme_bw()
+
+# Plot for FPR
+plot_fpr <- ggplot(df_fpr, aes(x = Subpopulation, y = mean_value, fill = threshold)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.7) +
+  geom_errorbar(aes(ymin = mean_value - sd_value, ymax = mean_value + sd_value), 
+                width = 0.2, 
+                position = position_dodge(0.7)) +
+  labs(title = "Mean FPR by Intersectional Groups and Threshold", 
+       x = "Intersectional Group", 
+       y = "Mean FPR") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Adjust x-axis labels for better readability
+        plot.title = element_text(hjust = 0.5)) +  # Center the plot title
+  scale_fill_manual(values = c("default" = "darkgrey", "lenient" = "darkcyan", "stringent" = "darkred"),
+                    name = "Threshold") +
+  theme_bw()
+
+# Show the plots
+print(plot_fnr)
+print(plot_fpr)
+
+```
+

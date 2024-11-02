@@ -36,9 +36,18 @@ This code block sets up parameters for adding noise to specific variables (noise
 The code also includes a parameter to control the non-linearity of the decision boundary (non_linear). Lastly, it sets up the threshold for crime scarcity based on a target crime rate (target_crime_rate), which adjusts the outcome distribution based on the desired crime rate within the dataset.
 ```{r}
 # Noise set-up
-noise_income <- 6000
-noise_house_ownership <- 0.09
-noise_crime <- 0.09
+noise_income <- 2000
+#6000
+#6500
+#2000
+noise_house_ownership <- 0.05
+#0.09
+#0.098
+#0.05
+noise_crime <- 0.05
+#0.09
+#0.098
+#0.05
 
 # Relationship of income to sensitive attributes and education
 # linear relationship when set FALSE; else non-linearity introduced in form of interactions
@@ -54,10 +63,13 @@ non_linear <- TRUE
 
 # Scarcity of crime outcome
 # Adjust threshold based on desired scarcity (e.g., target 10% crime rate)
-target_crime_rate <- 0.15
+target_crime_rate <- 0.04
+#0.15
 
 # Flipping target label (crime) to introduce more noise
-swap_rate <- 0.09
+swap_rate <- 0.005
+# 0.005
+#0.05
 ```
 
 # Generate protected attributes
@@ -481,14 +493,26 @@ var_glm <- glm(new_var ~ ., data = simulated_data)
 summary(var_glm)
 
 # 2nd new variable
-new_var2 <- generate_new_variable(data = simulated_data, 
+if(non_linear == TRUE) {
+   new_var2 <- generate_new_variable(data = simulated_data, 
+                                    existing_vars = c("income", "education", "new_var"),
+                                    coefficients = c(3.6, 0.7, 2.3), 
+                                    noise_sd = 3, 
+                                    functional_form = "log", 
+                                    binary = FALSE, 
+                                    cut_off = NULL,
+                                    non_linear = non_linear) 
+} else { 
+  new_var2 <- generate_new_variable(data = simulated_data, 
                                   existing_vars = c("income", "education", "new_var"),
-                                  coefficients = c(3.6, 0.7, 2.3), 
-                                  noise_sd = 3, 
-                                  functional_form = "log", 
+                                  coefficients = c(0.006, 3.7, 2.3), 
+                                  noise_sd = 2, 
+                                  functional_form = "linear", 
                                   binary = FALSE, 
                                   cut_off = NULL,
                                   non_linear = non_linear)
+  new_var2 <- scale(new_var2)
+}
 
 simulated_data$new_var2 <- new_var2
 
@@ -536,20 +560,31 @@ sigmoid <- function(x){
   1 / (1 + exp(-x))
 }
 
-# Linear Combination
-linear_combination <- -0.2 * as.numeric(simulated_data$education) +
-                      -0.00003 * simulated_data$income +
-                      -1.7 * simulated_data$house_ownership +
-                      -0.7 * simulated_data$new_var +
+if(non_linear == TRUE){
+  # Linear Combination
+  linear_combination <- -0.25 * as.numeric(simulated_data$education) +
+                        -0.00008 * simulated_data$income +
+                        -2.2 * simulated_data$house_ownership +
+                        -1.2 * simulated_data$new_var +
+                        0.0007 * simulated_data$new_var2 +
+                        0.09 * simulated_data$new_var3 +
+                        0.0009 * simulated_data$new_var4
+} else {
+  linear_combination <- -0.2 * as.numeric(simulated_data$education) +
+                      -0.0003 * simulated_data$income +
+                      -2.7 * simulated_data$house_ownership +
+                      -1.2 * simulated_data$new_var +
                       0.0007 * simulated_data$new_var2 +
-                      0.065 * simulated_data$new_var3 +
+                      0.09 * simulated_data$new_var3 +
                       0.0009 * simulated_data$new_var4
+}
+
 
 # Adjustments for non-linear decision boundary
 if(non_linear == TRUE){
   # Optional Non-Linear Terms
   non_linear_component <- -0.05 * (simulated_data$income)^2 + 
-                          0.02 * (simulated_data$new_var * simulated_data$new_var2) + 
+                          0.002 * (simulated_data$new_var * simulated_data$new_var2) + 
                           -0.03 * (simulated_data$income * as.numeric(simulated_data$education))
   # Adjust scope of values
   non_linear_component <- non_linear_component / median(non_linear_component)
@@ -561,7 +596,7 @@ if(non_linear == TRUE){
   crime_increase <- ifelse(simulated_data$income > lower_bracket & simulated_data$income < upper_bracket, 1, 0)
   
   crime_increase_noise <- ifelse(crime_increase == 1, 
-                                 rnorm(sum(crime_increase), mean = 0.5, sd = 0.5), 
+                                 rnorm(sum(crime_increase), mean = 0.5, sd = 0.05), 
                                  0)
   # Include lowered middle class crime
   lower_bracket <- quantile(income, probs = 0.35)
@@ -570,16 +605,16 @@ if(non_linear == TRUE){
   crime_decrease <- ifelse(simulated_data$income > lower_bracket & simulated_data$income < upper_bracket, -1, 0)
   
   crime_decrease_noise <- ifelse(crime_decrease == -1, 
-                                 rnorm(abs(sum(crime_decrease)), mean = -0.6, sd = 0.5), 
+                                 rnorm(abs(sum(crime_decrease)), mean = -0.6, sd = 0.03), 
                                  0)
   
   # Add non-linearity to education
   # Increase for higher education
   crime_increase_education <- ifelse(simulated_data$education == "Master's" | simulated_data$education == "Doctorate", 
-                                     sample(c(0,1), 100, replace = TRUE, prob = c(0.60, 0.40)), 
+                                     sample(c(0,1), 100, replace = TRUE, prob = c(0.80, 0.20)), 
                                      0)
   crime_increase_education_noise <- ifelse(crime_increase_education == 1, 
-                                 rnorm(sum(crime_increase_education), mean = 1, sd = 0.5), 
+                                 rnorm(sum(crime_increase_education), mean = 1, sd = 0.003), 
                                  0)
   
   # Decrease for High School
@@ -587,7 +622,7 @@ if(non_linear == TRUE){
                                      sample(c(0,-1), 100, replace = TRUE, prob = c(0.80, 0.20)), 
                                      0)
   crime_decrease_education_noise <- ifelse(crime_decrease_education == -1, 
-                                 rnorm(abs(sum(crime_decrease_education)), mean = -0.5, sd = 0.5), 
+                                 rnorm(abs(sum(crime_decrease_education)), mean = -0.5, sd = 0.3), 
                                  0)  
 
 
@@ -625,8 +660,8 @@ if(non_linear == FALSE) {
   
   # Randomly select 70% from above the threshold and 30% from the bottom 20% below the threshold
   set.seed(123) # Ensure reproducibility
-  selected_above <- sample(above_threshold, size = floor(0.8 * length(above_threshold)), replace = FALSE)
-  selected_below <- sample(bottom_20_below_threshold, size = floor(0.2 * length(above_threshold)), replace = FALSE)
+  selected_above <- sample(above_threshold, size = floor(0.9 * length(above_threshold)), replace = FALSE)
+  selected_below <- sample(bottom_20_below_threshold, size = floor(0.1 * length(above_threshold)), replace = FALSE)
   
   # Combine both selections
   final_selection <- c(selected_above, selected_below)
@@ -651,6 +686,12 @@ swap_indices <- sample(1:n, size = round(n * swap_rate, 0), replace = FALSE)
 
 # re-classify cases to opposite outcome
 simulated_data$crime[swap_indices] <- ifelse(simulated_data$crime[swap_indices] == 1, 0, 1)
+```
+
+# GLM on crime
+```{r}
+crime_model <- glm(crime ~ ., data = simulated_data)
+summary(crime_model)
 ```
 
 # Creating missing values
@@ -757,7 +798,7 @@ create_missing_values <- function(data, var_names, proportion = NULL, num_missin
 if (missing_data == TRUE) {
   # Adding random missing values
   simulated_data <- create_missing_values(simulated_data, var_names = c("income", "education"), 
-                                          proportion = 0.02, type = "random")
+                                          proportion = 0.03, type = "random")
 
   # Adding sensitive-based missing values (income: more missing for minorities and disabled)
   simulated_data <- create_missing_values(simulated_data, var_names = "income", 
@@ -766,12 +807,12 @@ if (missing_data == TRUE) {
 
   # Adding dependent missing values (new_var4: based on income and education)
   simulated_data <- create_missing_values(simulated_data, var_names = "new_var4", 
-                                          num_missing = 75, type = "dependent", 
+                                          proportion = 0.05, type = "dependent", 
                                           open_var = c("income", "education"))
 
   # Adding sensitive-dependent missing values (house_ownership: more missing for females and minorities)
   simulated_data <- create_missing_values(simulated_data, var_names = "house_ownership", 
-                                          num_missing = 85, type = "sensitive", 
+                                          proportion = 0.02, type = "sensitive", 
                                           sensitive_var = c("gender", "ethnicity"))
   
   # Overview of NA values

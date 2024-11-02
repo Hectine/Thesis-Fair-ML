@@ -1,0 +1,280 @@
+---
+title: "Tuning Effect"
+author: "Leona"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load data 
+```{r}
+test_d <- data_test
+train_d <- data_train
+```
+
+```{r}
+# Ensure the target variable is binary (0 and 1)
+  train_label <- as.numeric(as.factor(train_d$crime)) - 1
+  test_label <- as.numeric(as.factor(test_d$crime)) - 1
+
+  # Convert categorical variables to numeric
+  train <- train_d[, 4:10]
+  test <- test_d[, 4:10]
+
+  train_xg <- as.data.frame(lapply(train, function(x) {
+    if (is.factor(x) || is.character(x)) {
+      as.numeric(as.factor(x))
+    } else {
+      x
+    }
+  }))
+
+  test_xg <- as.data.frame(lapply(test, function(x) {
+    if (is.factor(x) || is.character(x)) {
+      as.numeric(as.factor(x))
+    } else {
+      x
+    }
+  }))
+
+  # Convert the data to DMatrix format
+  train_matrix <- xgb.DMatrix(data = as.matrix(train_xg), label = train_label)
+  test_matrix <- xgb.DMatrix(data = as.matrix(test_xg), label = test_label)
+  
+  # tested parameters
+  max_depth_vals <- c(1:20)
+  
+  # empty
+  AUC <- c()
+  FPR_default <- c()
+  FPR_stringent <- c()
+  FPR_lenient <- c()
+  FNR_default <- c()
+  FNR_stringent <- c()
+  FNR_lenient <- c()
+
+  # train XGBoost
+  for(d_val in max_depth_vals){
+        # Set the parameters for XGBoost
+        params <- list(
+          objective = "binary:logistic",
+          eval_metric = "auc",
+          eta = 0.1,
+          max_depth = d_val,
+          nrounds = 50
+    )
+      
+    # Fit the XGBoost model
+    model <- xgb.train(params = params, data = train_matrix, nrounds = params$nrounds)
+
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(model, newdata = train_matrix)
+
+    # Obtain predicted probabilities for the test data
+    probabilities_test <- predict(model, newdata = test_matrix)
+    
+    # Obtain AUC value
+    roc_curve <- roc(test_d$crime, probabilities_test)
+    AUC[d_val] <- auc(roc_curve)
+    
+    # Obtain thresholds (default, lenient, stringent)
+    threshold_default <- 0.5
+    threshold_lenient <- quantile(probabilities_test, 0.9)
+    threshold_stringent <- quantile(probabilities_test, 0.1)
+    
+    # Confusion matrices
+    cm_default <- table(test_d$crime, ifelse(probabilities_test < threshold_default, 0, 1))
+    cm_lenient <- table(test_d$crime, ifelse(probabilities_test < threshold_lenient, 0, 1))
+    cm_stringent <- table(test_d$crime, ifelse(probabilities_test < threshold_stringent, 0, 1))
+    
+    # obtain FPR for three thresholds
+    FPR_default[d_val] <- cm_default[1,2] / (cm_default[1,2] + cm_default[1,1])
+    #FPR_stringent[d_val] <- cm_stringent[1,2] / (cm_stringent[1,2] + cm_stringent[1,1])
+    #FPR_lenient[d_val] <- cm_lenient[1,2] / (cm_lenient[1,2] + cm_lenient[1,1])
+  
+    # obtain FNR for three thresholds
+    FNR_default[d_val] <- cm_default[2,1] / (cm_default[2,1] + cm_default[2,2])
+    #FNR_stringent[d_val] <- cm_stringent[2,1] / (cm_stringent[2,1] + cm_stringent[2,2])
+    #FNR_lenient[d_val] <- cm_lenient[2,1] / (cm_lenient[2,1] + cm_lenient[2,2])
+    
+    # print progress
+    cat(d_val, "/", length(max_depth_vals))
+  }
+
+```
+
+# Save results as dataframe
+```{r}
+tuning_vals <- tibble(max_depth_vals, AUC, FPR_default, FPR_stringent, FPR_lenient, FNR_default, FNR_stringent, FNR_lenient)
+tuning_vals <- as.data.frame(tuning_vals)
+
+# Reshape the data to long format
+tuning_vals_long <- tuning_vals %>%
+  pivot_longer(cols = c(AUC, FPR_default, FPR_stringent, FPR_lenient, FNR_default, FNR_stringent, FNR_lenient),
+               names_to = "Metric",
+               values_to = "Value")
+```
+# Plotting FPR
+```{r}
+# AUC
+tuning_vals_filtered <- tuning_vals_long %>%
+  filter(Metric %in% "AUC")
+
+AUC_plot <- ggplot(tuning_vals_filtered, aes(max_depth_vals, y = Value)) +
+  geom_point() +
+  geom_line() +
+  xlab("Maximal Depth") +
+  ylab("AUC Value") + 
+  theme_bw()
+
+AUC_plot
+
+# Default threshold
+tuning_vals_filtered <- tuning_vals_long %>%
+  filter(Metric %in% c("FNR_default", "FPR_default"))
+
+plot_default <- ggplot(tuning_vals_filtered, aes(max_depth_vals, y = Value)) +
+  geom_point(aes(colour = Metric)) +
+  geom_line(aes(colour = Metric)) +
+  scale_color_manual(values = c("darkcyan", "brown"), 
+                    labels = c("FNR", "FPR")) +    
+  xlab("Maximal Depth") +
+  ylab("FNR/FPR") + 
+  theme_bw()
+
+# Display the plot
+plot_default
+
+
+plot_default
+
+# Stringent Threshold
+tuning_vals_filtered <- tuning_vals_long %>%
+  filter(Metric %in% c("FNR_stringent", "FPR_stringent"))
+
+plot_stringent <- ggplot(tuning_vals_filtered, aes(max_depth_vals, y = Value)) +
+  geom_point(aes(colour = Metric)) +
+  geom_line(aes(colour = Metric)) +
+  xlab("Maximal Depth") +
+  ylab("FNR/FPR for stringent threshold") + 
+  theme_minimal()
+
+plot_stringent
+
+# Lenient
+tuning_vals_filtered <- tuning_vals_long %>%
+  filter(Metric %in% c("FNR_lenient", "FPR_lenient"))
+
+plot_lenient <- ggplot(tuning_vals_filtered, aes(max_depth_vals, y = Value)) +
+  geom_point(aes(colour = Metric)) +
+  geom_line(aes(colour = Metric)) +
+  xlab("Maximal Depth") +
+  ylab("FNR/FPR for lenient threshold") + 
+  theme_minimal()
+
+plot_lenient
+```
+
+```{r}
+grid.arrange(AUC_plot, plot_default)
+```
+```{r}
+mtry_v <- c(1:7)
+  
+  # empty
+  AUC <- c()
+  FPR_default <- c()
+  FPR_stringent <- c()
+  FPR_lenient <- c()
+  FNR_default <- c()
+  FNR_stringent <- c()
+  FNR_lenient <- c()
+
+  # train XGBoost
+  for(mtry_val in 1:length(mtry_v)){
+    model <- randomForest(as.factor(crime) ~ ., data = data_train[, 4:11], 
+                                n_tree = mtry_v[mtry_val], ntree = 500)
+          
+    # Predict on validation data
+    probabilities_test <- predict(model, newdata = data_test, type = "prob")[, 2]
+
+    # Obtain predicted probabilities for the training data
+    probabilities_train <- predict(model, newdata = data_train, type = "prob")[, 2]
+    
+    # Obtain AUC value
+    roc_curve <- roc(data_test$crime, probabilities_test)
+    AUC[mtry_val] <- auc(roc_curve)
+    
+    # Obtain thresholds (default, lenient, stringent)
+    threshold_default <- 0.5
+    threshold_lenient <- quantile(probabilities_test, 0.9)
+    threshold_stringent <- quantile(probabilities_test, 0.1)
+    
+    # Confusion matrices
+    cm_default <- table(data_test$crime, ifelse(probabilities_test < threshold_default, 0, 1))
+    cm_lenient <- table(data_test$crime, ifelse(probabilities_test < threshold_lenient, 0, 1))
+    cm_stringent <- table(data_test$crime, ifelse(probabilities_test < threshold_stringent, 0, 1))
+    
+    # obtain FPR for three thresholds
+    FPR_default[mtry_val] <- cm_default[1,2] / (cm_default[1,2] + cm_default[1,1])
+    #FPR_stringent[mtry_val] <- cm_stringent[1,2] / (cm_stringent[1,2] + cm_stringent[1,1])
+    #FPR_lenient[mtry_val] <- cm_lenient[1,2] / (cm_lenient[1,2] + cm_lenient[1,1])
+  
+    # obtain FNR for three thresholds
+    FNR_default[mtry_val] <- cm_default[2,1] / (cm_default[2,1] + cm_default[2,2])
+    #FNR_stringent[mtry_val] <- cm_stringent[2,1] / (cm_stringent[2,1] + cm_stringent[2,2])
+    #FNR_lenient[mtry_val] <- cm_lenient[2,1] / (cm_lenient[2,1] + cm_lenient[2,2])
+    
+    # print progress
+    cat(mtry_val, "/", length(mtry_v))
+  }
+  
+```
+# Save results as dataframe
+```{r}
+tuning_vals_rf <- tibble(mtry_v, AUC, FPR_default, FPR_stringent, FPR_lenient, FNR_default, FNR_stringent, FNR_lenient)
+tuning_vals_rf <- as.data.frame(tuning_vals_rf)
+
+# Reshape the data to long format
+tuning_vals_long_rf <- tuning_vals_rf %>%
+  pivot_longer(cols = c(AUC, FPR_default, FPR_stringent, FPR_lenient, FNR_default, FNR_stringent, FNR_lenient),
+               names_to = "Metric",
+               values_to = "Value")
+```
+# Plotting FPR
+```{r}
+# AUC
+tuning_vals_filtered <- tuning_vals_long_rf %>%
+  filter(Metric %in% "AUC")
+
+AUC_plot_rf <- ggplot(tuning_vals_filtered, aes(mtry_v, y = Value)) +
+  geom_point() +
+  geom_line() +
+  xlab("Mtry") +
+  ylab("AUC Value") + 
+  theme_bw()
+
+AUC_plot_rf
+
+# Default threshold
+tuning_vals_filtered <- tuning_vals_long_rf %>%
+  filter(Metric %in% c("FNR_default", "FPR_default"))
+
+plot_default_rf <- ggplot(tuning_vals_filtered, aes(mtry_v, y = Value)) +
+  geom_point(aes(colour = Metric)) +
+  geom_line(aes(colour = Metric)) +
+  scale_color_manual(values = c("darkcyan", "brown"), 
+                    labels = c("FNR", "FPR")) +    
+  xlab("Mtry") +
+  ylab("FNR/FPR") + 
+  theme_bw()
+
+# Display the plot
+plot_default_rf
+```
+
+```{r}
+grid.arrange(AUC_plot_rf, plot_default_rf)
